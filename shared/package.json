@@ -1,0 +1,16 @@
+{
+  "name": "@deenup/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "jest --verbose",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0",
+    "@types/jest": "^29.5.0"
+  }
+}

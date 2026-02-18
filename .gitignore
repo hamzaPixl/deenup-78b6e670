@@ -83,3 +83,4 @@ web-build/
 .expo/
 web-build/
 dist/
+.osgrep
