@@ -1,126 +1,207 @@
-# Code Quality Review: User Authentication System
+# Review: Real-time Match System
+
+## Automated Checks
+
+| Check | Scope | Result |
+|-------|-------|--------|
+| **TypeScript (shared)** | `shared/src/**/*.ts` | ✅ PASS — no type errors |
+| **TypeScript (backend)** | `backend/src/**/*.ts` | ✅ PASS — no type errors |
+| **Tests (shared)** | 7 suites, 92 tests | ✅ ALL PASS (0 failures) |
+| **Tests (backend)** | 15 suites, 157 tests | ✅ ALL PASS (0 failures, 2 skipped — live DB integration) |
+| **Linting** | N/A | ⚠️ No ESLint configured — no linter to run |
+| **Coverage** | N/A | ⚠️ No coverage threshold configured in jest.config.js |
+| **TODO/FIXME** | Changed files | ✅ None found |
+
+**Total: 249 tests passing, 2 skipped (live DB), 0 failures.**
+
+---
 
 ## Summary
-**Verdict:** APPROVE
 
-The authentication system is well-structured across all four workspaces (shared, backend, mobile, web). The code demonstrates strong architectural decisions — dependency injection for testability, pure validators without Express coupling, centralized error codes, and consistent patterns throughout. All 6 plan tasks are fully implemented. The code is clean, readable, and follows a consistent style. A few minor observations are noted below, but none warrant blocking the merge.
+**Verdict:** NEEDS WORK
 
-## Completeness Check
+The implementation covers all 13 plan tasks, compiles cleanly, and has 249 passing tests with good coverage of happy paths and basic edge cases. The architecture (services, validators, WebSocket handler, REST routes) follows clean separation of concerns. However, code review uncovered **4 critical bugs** that will cause incorrect behavior in production, plus several high-severity issues around data integrity and security.
 
-All 6 planned tasks are implemented and verified:
+---
 
-| Task | Status |
-|------|--------|
-| 1. Monorepo Scaffolding & Shared Types | ✅ Complete |
-| 2. Database Migration — Profiles Table | ✅ Complete |
-| 3. Backend — Supabase Client, Validators & Auth Service | ✅ Complete |
-| 4. Backend — Auth Middleware, Rate Limiter & Express Routes | ✅ Complete |
-| 5. Mobile — Supabase Client & AuthContext | ✅ Complete |
-| 6. Web — Supabase Client, Auth Utilities & Middleware | ✅ Complete |
+## Critical Issues (Must Fix)
 
-Task 7 (Integration Test & E2E Verification) was partially implemented — the profiles integration test exists with appropriate auto-skip, and the full auth integration test was not created as a separate file, but the route-level integration tests via supertest cover the same flows. This is acceptable for initial scaffolding.
+### C1. ELO applied backwards when player2 wins
+**File:** `backend/src/services/gameEngine.ts` lines 304-318
+**Severity:** Critical
 
-## Readability
+`applyEloChange` returns `{ winnerNewElo, loserNewElo }` where "winner"/"loser" refer to the first/second argument positions, not the actual match winner. The result is unconditionally mapped as `player1EloAfter: eloResult.winnerNewElo` and `player2EloAfter: eloResult.loserNewElo`. When `outcome = 'loss'` (player2 wins), the losing player gets the rating boost and the winning player gets penalized. **This corrupts ranking data.**
 
-- **Excellent separation of concerns.** Validators are pure functions, services encapsulate business logic, routes are thin wiring, middleware is focused. Each file has a single clear responsibility.
-- **Consistent French error messages** across the codebase (appropriate for French-first launch).
-- **Helper functions like `handleError` and `ERROR_STATUS_MAP`** in `routes/auth.ts` (lines 14-30) keep route handlers clean and focused.
-- **`mapProfile` private method** in `ProfileService` clearly encapsulates the snake_case→camelCase conversion in one place.
-- [MEDIUM] `web/src/app/login/page.tsx` and `signup/page.tsx` use extensive inline styles — while functional, these could benefit from shared style constants or CSS modules in future iterations. Not blocking for MVP scaffolding.
+### C2. Race condition on DeenPoints balance update
+**File:** `backend/src/services/deenPointsService.ts` lines 64-71
+**Severity:** Critical
 
-## Naming
+Classic TOCTOU: `getBalance()` then `update({ deen_points: newBalance })`. If `awardMatchWin` and `awardFastAnswer` fire concurrently for the same player (likely during match finalization), one award is lost. Fix: use atomic SQL `deen_points = deen_points + amount` via RPC or raw SQL.
 
-- **Clear, descriptive names** throughout: `createAuthRouter`, `authMiddleware`, `signupLimiter`, `AUTH_ERROR_CODES`, `RATE_LIMITS`.
-- **Consistent naming conventions:** PascalCase for classes/components, camelCase for functions/variables, UPPER_SNAKE_CASE for constants.
-- `AuthenticatedRequest` interface in `middleware/auth.ts` clearly communicates intent even though it's not used directly (Express augmentation in `express.d.ts` handles it).
-- `useAuthContext` / `useAuth` naming is idiomatic React.
-- `authApi` object in `web/src/lib/auth.ts` is well-named — distinguishes API calls from SDK operations.
+### C3. Placeholder `matchQuestionId` silently breaks answer persistence
+**File:** `backend/src/services/gameEngine.ts` line 246
+**Severity:** Critical
 
-## Complexity
+```ts
+matchQuestionId: `${matchId}-q${questionOrder}`, // placeholder
+```
+This fabricated string will violate FK constraints (if they exist) or store unjoinable data. Combined with `.catch(() => {})` on line 253, **all answer saves fail silently** — destroying the post-match review feature, which the PRD calls the "most important differentiator."
 
-- **No unnecessary abstractions.** The factory pattern (`createApp`, `createAuthRouter`) provides testability without over-engineering.
-- **Validators return a structured result** (`{ success, errors }`) rather than throwing — clean and composable.
-- **`apiCall` helper** in `web/src/lib/auth.ts` (lines 7-15) extracts the fetch-parse-throw pattern nicely, reducing duplication across signup/login/logout/reset.
-- [MEDIUM] `ProfileService.upsertProfileFromOAuth` (profileService.ts:47-70) always sets `elo` and `deen_points` to initial defaults. On upsert for returning OAuth users, this would reset their stats. The `ignoreDuplicates` option or `onConflict` clause may be more appropriate, but this is a correctness concern for the senior reviewer. From a code quality perspective, the logic is clear and well-structured.
+### C4. Race condition on concurrent `SUBMIT_ANSWER` — can skip questions or double-finalize
+**File:** `backend/src/websocket/socketHandler.ts` lines 311-361
+**Severity:** Critical
 
-## Patterns
+Both players submitting simultaneously can cause `handleBothAnswered` to be called 0 or 2 times due to no locking. Double-finalize corrupts the match; zero calls stalls it permanently. Needs a per-match mutex.
 
-- **Dependency injection** is consistently applied: `ProfileService(supabase)`, `AuthService(supabase, profileService)`, `createAuthRouter(authService)`, `createApp()`.
-- **Shared types/constants from `@deenup/shared`** are used consistently across all workspaces — no type definitions are duplicated.
-- **Error handling pattern** is consistent: services throw `{ code, message }` objects, routes catch and map via `ERROR_STATUS_MAP`.
-- **Test mocking** follows the project's DI-based approach — no module-level mocks for services (services receive mocked dependencies); module mocking only for hard dependencies (`supabase.ts` config).
-- **Rate limiter pattern** is clean — factory function `createLimiter()` with shared config from constants.
-- [MEDIUM] `(req as any).user` cast in `middleware/auth.ts:33` and `routes/auth.ts:130` — while `express.d.ts` augments the Request type, the `as any` bypass suggests the augmentation isn't fully wired. This is a known TypeScript/Express pattern issue and doesn't affect runtime behavior.
+---
+
+## High-Severity Issues (Should Fix Before Ship)
+
+### H1. Hardcoded ELO 1000 for all players in matchmaking
+**File:** `backend/src/websocket/socketHandler.ts` line 285
+
+Every player enters the queue with ELO 1000 regardless of actual rating. Makes ranked matchmaking meaningless and stores incorrect `elo_before` values in DB.
+
+### H2. `MatchEndedPayload.answers` is always empty
+**File:** `backend/src/websocket/socketHandler.ts` line 144
+
+Hardcoded `answers: []`. Clients never receive answer data for post-match review — the app's key differentiator is broken.
+
+### H3. PostgREST filter injection via string interpolation
+**File:** `backend/src/services/matchService.ts` line 199
+
+```ts
+.or(`player1_id.eq.${playerId},player2_id.eq.${playerId}`)
+```
+`playerId` is interpolated directly into the PostgREST filter string. A crafted `playerId` could alter query semantics. Must validate UUID format before interpolation.
+
+### H4. Disconnect does not abandon active matches
+**File:** `backend/src/websocket/socketHandler.ts` lines 388-390
+
+On disconnect, only queue removal happens. Active matches become zombie sessions — opponent waits forever for an answer.
+
+### H5. `handleMatchFound` proceeds with disconnected sockets
+**File:** `backend/src/websocket/socketHandler.ts` lines 180-188
+
+If a player disconnects between queue match and session creation, the match is created with a missing player. Creates a zombie match that persists until orphan cleanup (1 hour).
+
+### H6. CORS `origin: '*'` on both Express and Socket.io
+**File:** `backend/src/app.ts` lines 34, 61-64
+
+Wide-open CORS. Any website can make authenticated API requests. Acceptable for local dev but must be locked down.
+
+### H7. Cleanup function discarded — no graceful shutdown
+**File:** `backend/src/app.ts` line 71
+
+`createSocketHandler()` returns a cleanup function that is never stored. Matchmaking `setInterval` runs forever. No `SIGTERM`/`SIGINT` handler exists.
+
+### H8. `cleanupOrphanedSessions` is never called
+**File:** Cross-file
+
+The method exists in `GameEngine` with constants defined, but no code ever starts the cleanup interval. Orphaned sessions leak memory indefinitely.
+
+---
+
+## Security
+
+| Finding | Severity | File |
+|---------|----------|------|
+| PostgREST filter injection via `playerId` interpolation | **High** | `matchService.ts:199` |
+| CORS `origin: '*'` on Express + Socket.io | **High** | `app.ts:34,61` |
+| No rate limiting on any endpoint | **Medium** | `app.ts` (missing) |
+| `timeTakenMs` not server-validated — client controls scoring | **Medium** | `validators/match.ts`, `gameEngine.ts` |
+| No server-side question timeout — matches stall if clients stop responding | **Medium** | `socketHandler.ts` |
+| Raw Supabase errors leaked in messages | **Low** | `questionService.ts:85` |
+| No security headers (Helmet) | **Low** | `app.ts` |
+
+---
+
+## Completeness
+
+| Requirement | Status |
+|-------------|--------|
+| ELO calculation service | ✅ Implemented (but C1 bug in application layer) |
+| Question fetching with distribution | ✅ Implemented |
+| Match CRUD service | ✅ Implemented |
+| DeenPoints rewards | ⚠️ Implemented (C2 race condition) |
+| Matchmaking queue | ✅ Implemented |
+| Game engine orchestration | ⚠️ Implemented (C1, C3, C4 bugs) |
+| Socket auth middleware | ✅ Implemented |
+| Socket event handler | ⚠️ Implemented (H1, H2, H4, H5 issues) |
+| REST match routes | ✅ Implemented |
+| Input validators | ✅ Implemented |
+| Shared types/constants | ⚠️ Implemented (missing payload types for 11/18 events) |
+| Post-match review data | ❌ Broken (H2: answers always empty, C3: answers not persisted) |
+| Rematch flow handlers | ❌ Events defined but no handler implementation |
+| Power-up (DeenPoints spend) | ❌ No debit/spend method |
+| Graceful shutdown | ❌ Not implemented |
+
+---
 
 ## Performance
 
-- **No N+1 queries** — each service method makes exactly one DB call.
-- **ELO index** (`idx_profiles_elo`) added proactively in migration for future leaderboard queries.
-- **Rate limiting** is properly configured per-endpoint with appropriate limits (5 signup, 10 login, 3 reset per minute).
-- **Supabase admin client** created once at module level and shared — no connection-per-request overhead.
-- **Web middleware** creates a new Supabase client per request — this is the recommended pattern for Next.js middleware (edge runtime, stateless). No concern here.
+| Finding | Severity |
+|---------|----------|
+| Biased question randomization — always favors newest questions (`ORDER BY created_at DESC`) | Medium |
+| In-memory sessions lost on server restart — no persistence/recovery | Medium |
+| Asymmetric ELO window matching — new players can be pulled into wide-gap matches | Low |
+| `deenPointsService` `.single()` without `.select()` — `data` always null, falls through to default | Low |
 
-## Tests
+---
 
-- **78 unit tests passing** across all workspaces with strong coverage:
-  - Validators: 11 tests covering valid input, missing fields, boundary conditions (short password, whitespace displayName)
-  - Services: 16 tests covering happy path, error cases, edge cases (null data, OAuth upsert)
-  - Middleware: 5 tests covering no header, malformed header, invalid token, null user, valid token
-  - Routes: 12 tests covering all 7 endpoints with success/failure scenarios
-  - Mobile: 5 tests covering module exports, signup/login API calls, error responses
-  - Web: 7 tests covering all authApi methods including logout edge cases
-  - Shared: 7 tests validating type contracts and constant values
-- **Test names describe behavior** (e.g., "should return EMAIL_EXISTS error for duplicate email", "should always return 200 (prevent enumeration)")
-- **Integration tests auto-skip** when Supabase is not configured — prevents CI failures while allowing manual local testing.
-- **Good mock isolation** — `jest.clearAllMocks()` in every `beforeEach`, fresh app per test suite.
-- [MEDIUM] `mobile/src/__tests__/contexts/AuthContext.test.tsx` tests fetch calls directly rather than through the AuthProvider component (due to react-test-renderer peer dep issue). While pragmatic, these tests verify the API contract rather than the component behavior. Acceptable for initial scaffolding; should be upgraded when Expo testing infrastructure is set up.
+## Recommendations
 
-## Suggestions
+### Must Fix (Critical)
+1. **Fix ELO mapping in `gameEngine.finalizeMatch`** — when player2 wins, swap the assignment of `winnerNewElo`/`loserNewElo` to player ELO fields, or refactor `eloService` to accept player1/player2 semantics directly.
+2. **Make DeenPoints update atomic** — use Supabase RPC or raw SQL: `deen_points = deen_points + $amount`.
+3. **Fix `matchQuestionId`** — store real `match_questions.id` values (returned from `saveMatchQuestions`) and pass them to `saveAnswer`.
+4. **Add per-match mutex** for `submitAnswer` in the socket handler to prevent double-finalize/skip.
 
-1. **[Nit]** Export `ValidationResult` interface from `validators/auth.ts` so consumers can type-check validation results without re-declaring the shape.
-2. **[Nit]** The `email` field is missing from the profiles DB table (migration SQL) but `mapProfile` defaults it to `''` — this is intentional since email comes from `auth.users`, not `profiles`. A brief comment in `mapProfile` would clarify this design decision.
-3. **[Nit]** Consider adding `preferred_language` to the `User` shared type for future i18n features — it's stored in the DB but not exposed in the API response.
-4. **[Minor]** `web/src/app/login/page.tsx:20-22` error handling catches `err: unknown` but only checks `typeof err === 'string'` — the backend throws `{ code, message }` objects. The error display should handle the object case (e.g., `err?.message`). This is a UX polish item for a future iteration.
+### Should Fix (High)
+5. **Fetch real player ELO** from DB in `JOIN_QUEUE` handler.
+6. **Populate `MatchEndedPayload.answers`** with actual answer data from the game session.
+7. **Handle disconnect for active matches** — abandon the match and notify opponent.
+8. **Guard `handleMatchFound`** against disconnected sockets — abort if either is gone.
+9. **Wire up `cleanupOrphanedSessions`** on an interval and store the cleanup function return value.
+10. **Add graceful shutdown** — `SIGTERM` handler to stop matchmaking loop, close HTTP server, clean sessions.
+
+### Should Fix (Medium)
+11. **Lock down CORS** to allowed origins from env config.
+12. **Add rate limiting** on match routes and WebSocket connection.
+13. **Validate `timeTakenMs`** against server-side question start timestamp.
+14. **Add server-side question timeout** — auto-submit null answers when time expires.
+15. **Type `MatchErrorPayload.code` as `MatchErrorCode`** instead of `string`.
+16. **Add payload types for remaining 11 WebSocket events**.
+
+---
 
 ## Files Reviewed
 
 ### Shared Package
-- `shared/src/types/auth.ts`
-- `shared/src/constants/auth.ts`
+- `shared/src/constants/match.ts`
+- `shared/src/types/errors.ts`
+- `shared/src/types/websocket.ts`
+- `shared/src/types/match-api.ts`
 - `shared/src/index.ts`
-- `shared/src/__tests__/auth-types.test.ts`
 
-### Backend
-- `backend/supabase/migrations/001_create_profiles.sql`
-- `backend/src/config/supabase.ts`
-- `backend/src/validators/auth.ts`
-- `backend/src/services/profileService.ts`
-- `backend/src/services/authService.ts`
-- `backend/src/middleware/auth.ts`
-- `backend/src/middleware/rateLimiter.ts`
-- `backend/src/routes/auth.ts`
+### Backend — Services
+- `backend/src/services/eloService.ts`
+- `backend/src/services/questionService.ts`
+- `backend/src/services/matchService.ts`
+- `backend/src/services/deenPointsService.ts`
+- `backend/src/services/matchmakingService.ts`
+- `backend/src/services/gameEngine.ts`
+
+### Backend — WebSocket
+- `backend/src/websocket/socketAuth.ts`
+- `backend/src/websocket/socketHandler.ts`
+
+### Backend — Routes & Validators
+- `backend/src/routes/matches.ts`
+- `backend/src/validators/match.ts`
+
+### Backend — App Wiring
 - `backend/src/app.ts`
 - `backend/src/index.ts`
-- `backend/src/types/express.d.ts`
-- `backend/src/__tests__/validators/auth.test.ts`
-- `backend/src/__tests__/services/profileService.test.ts`
-- `backend/src/__tests__/services/authService.test.ts`
-- `backend/src/__tests__/middleware/auth.test.ts`
-- `backend/src/__tests__/routes/auth.test.ts`
-- `backend/src/__tests__/migrations/profiles.integration.test.ts`
 
-### Mobile
-- `mobile/src/lib/supabase.ts`
-- `mobile/src/contexts/AuthContext.tsx`
-- `mobile/src/hooks/useAuth.ts`
-- `mobile/src/__mocks__/supabase.ts`
-- `mobile/src/__tests__/contexts/AuthContext.test.tsx`
-- `mobile/src/__tests__/hooks/useAuth.test.ts`
-
-### Web
-- `web/src/lib/supabase.ts`
-- `web/src/lib/auth.ts`
-- `web/src/middleware.ts`
-- `web/src/app/login/page.tsx`
-- `web/src/app/signup/page.tsx`
-- `web/src/__tests__/lib/auth.test.ts`
+### Tests (all 22 test files verified via `npx jest --verbose`)
