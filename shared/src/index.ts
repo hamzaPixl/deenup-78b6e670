@@ -54,3 +54,5 @@ export {
   THEMES,
   SALONS,
 } from './constants/game';
+
+export { REVIEW_ERROR_CODES } from './constants/review';
