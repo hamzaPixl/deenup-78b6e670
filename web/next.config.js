@@ -1,8 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    serverActions: true,
-  },
+  // serverActions are enabled by default in Next.js 14 — no experimental flag needed
   transpilePackages: ['@deenup/shared'],
 };
 
