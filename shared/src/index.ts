@@ -1,5 +1,6 @@
 export type {
   User,
+  UserRole,
   AuthSession,
   AuthError,
   AuthErrorResponse,
@@ -18,10 +19,10 @@ export {
 
 export type {
   Difficulty,
-  QuestionStatus,
+  QuestionStatus as LegacyQuestionStatus,
   MatchStatus,
   MatchType,
-  SourceType,
+  SourceType as LegacySourceType,
   PointsTransactionType,
   ModerationStatus,
 } from './types/enums';
@@ -30,8 +31,8 @@ export { ENUM_VALUES } from './types/enums';
 
 export type {
   Theme,
-  Question,
-  QuestionSource,
+  Question as GameQuestion,
+  QuestionSource as GameQuestionSource,
   Match,
   MatchQuestion,
   MatchAnswer,
@@ -51,7 +52,7 @@ export {
   MATCH_FORMAT,
   DEEN_POINTS,
   POWERUP_COSTS,
-  THEMES,
+  THEMES as GAME_THEMES,
   SALONS,
 } from './constants/game';
 
@@ -84,3 +85,35 @@ export type {
   MatchHistoryResponse,
   MatchDetailResponse,
 } from './types/match-api';
+
+export type {
+  QuestionStatus,
+  QuestionDifficulty,
+  QuestionTheme,
+  QuestionType,
+  SourceType,
+  ReportReason,
+  QuestionOption,
+  QuestionSource,
+  Question,
+  CreateSourceInput,
+  CreateQuestionRequest,
+  UpdateQuestionRequest,
+  QuestionFilters,
+  QuestionListResponse,
+  ReviewAction,
+  QuestionReport,
+} from './types/question';
+
+export {
+  THEMES,
+  DIFFICULTIES,
+  QUESTION_TYPES,
+  QUESTION_STATUSES,
+  SOURCE_TYPES,
+  REPORT_REASONS,
+  QUESTION_DEFAULTS,
+  QUESTION_RATE_LIMITS,
+  QUESTION_ERROR_CODES,
+  REPORT_AUTO_FLAG_THRESHOLD,
+} from './constants/question';

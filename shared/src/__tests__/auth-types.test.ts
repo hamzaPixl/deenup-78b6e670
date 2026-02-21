@@ -1,6 +1,7 @@
 // shared/src/__tests__/auth-types.test.ts
 import {
   User,
+  UserRole,
   AuthSession,
   AuthError,
   SignupRequest,
@@ -39,11 +40,31 @@ describe('Auth Types', () => {
       avatarUrl: null,
       elo: 1000,
       deenPoints: 50,
+      role: 'player',
       createdAt: '2026-01-01T00:00:00Z',
       updatedAt: '2026-01-01T00:00:00Z',
     };
     expect(user.elo).toBe(1000);
     expect(user.deenPoints).toBe(50);
+    expect(user.role).toBe('player');
+  });
+
+  it('should accept all valid user roles', () => {
+    const roles: UserRole[] = ['player', 'moderator', 'admin'];
+    roles.forEach(role => {
+      const user: User = {
+        id: 'uuid-123',
+        email: 'test@example.com',
+        displayName: 'Test User',
+        avatarUrl: null,
+        elo: 1000,
+        deenPoints: 50,
+        role,
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      };
+      expect(user.role).toBe(role);
+    });
   });
 
   it('should create a valid AuthSession', () => {
@@ -58,6 +79,7 @@ describe('Auth Types', () => {
         avatarUrl: null,
         elo: 1000,
         deenPoints: 50,
+        role: 'player',
         createdAt: '2026-01-01T00:00:00Z',
         updatedAt: '2026-01-01T00:00:00Z',
       },

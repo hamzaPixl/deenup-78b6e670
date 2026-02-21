@@ -1,3 +1,5 @@
+export type UserRole = 'player' | 'moderator' | 'admin';
+
 export interface User {
   id: string;
   email: string;
@@ -5,6 +7,7 @@ export interface User {
   avatarUrl: string | null;
   elo: number;
   deenPoints: number;
+  role: UserRole;
   createdAt: string;
   updatedAt: string;
 }
