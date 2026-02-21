@@ -54,10 +54,11 @@ function makeGameEngine() {
     createSession: jest.fn(),
     startSession: jest.fn(),
     submitAnswer: jest.fn(),
-    abandonMatch: jest.fn(),
+    abandonMatch: jest.fn().mockResolvedValue({ opponentId: null }),
     finalizeMatch: jest.fn(),
     advanceQuestion: jest.fn(),
     getSession: jest.fn(),
+    getSessionByPlayerId: jest.fn().mockReturnValue(undefined),
   };
 }
 
@@ -87,7 +88,9 @@ describe('createSocketHandler', () => {
     gameEngine = makeGameEngine();
     matchmakingService = makeMatchmakingService();
 
-    cleanup = createSocketHandler(io as any, gameEngine as any, matchmakingService as any);
+    const mockMatchService = { getMatchAnswers: jest.fn().mockResolvedValue([]) };
+const mockProfileService = { getProfile: jest.fn().mockResolvedValue({ elo: 1000 }) };
+    cleanup = createSocketHandler(io as any, gameEngine as any, matchmakingService as any, mockMatchService as any, mockProfileService as any);
 
     // Simulate a connection
     socket = makeSocket('player-1', 'socket-1');
@@ -103,16 +106,20 @@ describe('createSocketHandler', () => {
   // JOIN_QUEUE
   // -------------------------------------------------------------------------
   describe(CLIENT_EVENTS.JOIN_QUEUE, () => {
-    it('emits QUEUE_JOINED when payload is valid', () => {
+    it('emits QUEUE_JOINED when payload is valid', async () => {
       matchmakingService.joinQueue.mockReturnValue(3);
 
       socket._trigger(CLIENT_EVENTS.JOIN_QUEUE, { matchType: 'ranked' });
+
+      // JOIN_QUEUE handler is async (fetches ELO) — wait for it to resolve
+      await new Promise((r) => setImmediate(r));
 
       expect(matchmakingService.joinQueue).toHaveBeenCalledWith(
         'player-1',
         'socket-1',
         1000,
-        'ranked'
+        'ranked',
+        null  // themeId defaults to null when not provided
       );
       expect(socket.emit).toHaveBeenCalledWith(
         SERVER_EVENTS.QUEUE_JOINED,
@@ -130,12 +137,15 @@ describe('createSocketHandler', () => {
       );
     });
 
-    it('emits ERROR when matchmakingService throws ALREADY_IN_QUEUE', () => {
+    it('emits ERROR when matchmakingService throws ALREADY_IN_QUEUE', async () => {
       matchmakingService.joinQueue.mockImplementation(() => {
         throw { code: MATCH_ERROR_CODES.ALREADY_IN_QUEUE, message: 'Already in queue' };
       });
 
       socket._trigger(CLIENT_EVENTS.JOIN_QUEUE, { matchType: 'unranked' });
+
+      // Handler is async — wait for it to resolve
+      await new Promise((r) => setImmediate(r));
 
       expect(socket.emit).toHaveBeenCalledWith(
         SERVER_EVENTS.ERROR,
@@ -307,7 +317,7 @@ describe('createSocketHandler', () => {
     const validMatchId = '22222222-2222-2222-2222-222222222222';
 
     it('calls abandonMatch and notifies opponent', async () => {
-      gameEngine.abandonMatch.mockResolvedValue(undefined);
+      gameEngine.abandonMatch.mockResolvedValue({ opponentId: 'player-2' });
 
       socket._trigger(CLIENT_EVENTS.ABANDON_MATCH, { matchId: validMatchId });
 

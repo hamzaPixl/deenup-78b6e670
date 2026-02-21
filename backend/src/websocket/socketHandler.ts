@@ -13,22 +13,30 @@ import type {
   MatchEndedPayload,
   MatchErrorPayload,
   AnswerSummary,
+  MatchAnswer,
 } from '@deenup/shared';
 import { GAME_SESSION, MATCH_ERROR_CODES } from '@deenup/shared';
 import { validateJoinQueue, validateSubmitAnswer } from '../validators/match';
 import type { GameEngine } from '../services/gameEngine';
 import type { MatchmakingService, QueueEntry } from '../services/matchmakingService';
+import type { MatchService } from '../services/matchService';
+import type { ProfileService } from '../services/profileService';
 import type { AuthenticatedSocket } from './socketAuth';
 
 /**
  * Creates and wires all Socket.io event handlers.
- * Returns a cleanup function to stop the matchmaking loop.
+ * Returns a cleanup function to stop the matchmaking loop and orphan cleanup.
  */
 export function createSocketHandler(
   io: Server,
   gameEngine: GameEngine,
-  matchmakingService: MatchmakingService
+  matchmakingService: MatchmakingService,
+  matchService: MatchService,
+  profileService: ProfileService
 ): () => void {
+  // H1: per-(matchId, questionOrder) lock to prevent duplicate QUESTION_REVEAL on concurrent submits
+  const revealInProgress = new Set<string>();
+
   // -------------------------------------------------------------------------
   // Helper: emit an error to a specific socket
   // -------------------------------------------------------------------------
@@ -38,119 +46,109 @@ export function createSocketHandler(
   }
 
   // -------------------------------------------------------------------------
-  // Helper: build a QuestionStartPayload from a session question
-  // -------------------------------------------------------------------------
-  function buildQuestionStart(
-    matchId: string,
-    questionPayload: ReturnType<GameEngine['advanceQuestion']>
-  ): QuestionStartPayload | null {
-    if (!questionPayload) return null;
-    const session = gameEngine.getSession(matchId);
-    if (!session) return null;
-
-    return {
-      matchId,
-      questionOrder: questionPayload.questionOrder,
-      totalQuestions: session.questions.length,
-      questionId: session.questions[questionPayload.questionOrder].id,
-      questionText: questionPayload.questionText,
-      answers: questionPayload.answers,
-      difficulty: questionPayload.difficulty,
-      timeLimitMs: questionPayload.timeLimitMs,
-    };
-  }
-
-  // -------------------------------------------------------------------------
   // Helper: emit QUESTION_REVEAL and then either next question or match end
   // -------------------------------------------------------------------------
   async function handleBothAnswered(
     matchId: string,
     questionOrder: number
   ): Promise<void> {
-    const session = gameEngine.getSession(matchId);
-    if (!session) return;
+    // H1: idempotency lock — only one caller proceeds
+    const lockKey = `${matchId}:${questionOrder}`;
+    if (revealInProgress.has(lockKey)) return;
+    revealInProgress.add(lockKey);
 
-    const answerSlot = session.answers[questionOrder];
-    const currentQuestion = session.questions[questionOrder];
+    try {
+      const session = gameEngine.getSession(matchId);
+      if (!session) return;
 
-    // Build reveal payload
-    function buildAnswerSummary(
-      playerId: string,
-      record: NonNullable<typeof answerSlot.player1>
-    ): AnswerSummary {
-      return {
-        playerId,
-        selectedAnswerIndex: record.selectedAnswerIndex,
-        isCorrect: record.isCorrect,
-        timeTakenMs: record.timeTakenMs,
-        pointsEarned: record.pointsEarned,
-      };
-    }
+      const answerSlot = session.answers[questionOrder];
+      const currentQuestion = session.questions[questionOrder];
 
-    const revealPayload: QuestionRevealPayload = {
-      matchId,
-      questionOrder,
-      correctAnswerIndex: currentQuestion.correct_answer_index,
-      explanationFr: currentQuestion.explanation_fr,
-      player1Answer: answerSlot.player1
-        ? buildAnswerSummary(session.player1Id, answerSlot.player1)
-        : null,
-      player2Answer: answerSlot.player2
-        ? buildAnswerSummary(session.player2Id, answerSlot.player2)
-        : null,
-      player1Score: session.player1Score,
-      player2Score: session.player2Score,
-    };
+      function buildAnswerSummary(
+        playerId: string,
+        record: NonNullable<typeof answerSlot.player1>
+      ): AnswerSummary {
+        return {
+          playerId,
+          selectedAnswerIndex: record.selectedAnswerIndex,
+          isCorrect: record.isCorrect,
+          timeTakenMs: record.timeTakenMs,
+          pointsEarned: record.pointsEarned,
+        };
+      }
 
-    // Emit reveal to both players in the match room
-    io.to(matchId).emit(SERVER_EVENTS.QUESTION_REVEAL, revealPayload);
-
-    // Wait the reveal delay, then advance or finalize
-    await delay(GAME_SESSION.ANSWER_REVEAL_DELAY_MS);
-
-    const nextQuestion = gameEngine.advanceQuestion(matchId);
-
-    if (nextQuestion) {
-      // Still more questions
-      const updatedSession = gameEngine.getSession(matchId);
-      if (!updatedSession) return;
-
-      const startPayload: QuestionStartPayload = {
+      const revealPayload: QuestionRevealPayload = {
         matchId,
-        questionOrder: nextQuestion.questionOrder,
-        totalQuestions: updatedSession.questions.length,
-        questionId: updatedSession.questions[nextQuestion.questionOrder].id,
-        questionText: nextQuestion.questionText,
-        answers: nextQuestion.answers,
-        difficulty: nextQuestion.difficulty,
-        timeLimitMs: nextQuestion.timeLimitMs,
+        questionOrder,
+        correctAnswerIndex: currentQuestion.correct_answer_index,
+        explanationFr: currentQuestion.explanation_fr,
+        player1Answer: answerSlot.player1
+          ? buildAnswerSummary(session.player1Id, answerSlot.player1)
+          : null,
+        player2Answer: answerSlot.player2
+          ? buildAnswerSummary(session.player2Id, answerSlot.player2)
+          : null,
+        player1Score: session.player1Score,
+        player2Score: session.player2Score,
       };
 
-      io.to(matchId).emit(SERVER_EVENTS.QUESTION_START, startPayload);
-    } else {
-      // Match is over — finalize
-      try {
-        const result = await gameEngine.finalizeMatch(matchId);
+      io.to(matchId).emit(SERVER_EVENTS.QUESTION_REVEAL, revealPayload);
 
-        const endPayload: MatchEndedPayload = {
-          matchId: result.matchId,
-          winnerId: result.winnerId,
-          player1Score: result.player1Score,
-          player2Score: result.player2Score,
-          player1EloChange: result.player1EloDelta,
-          player2EloChange: result.player2EloDelta,
-          player1EloAfter: result.player1EloAfter,
-          player2EloAfter: result.player2EloAfter,
-          answers: [],
+      await delay(GAME_SESSION.ANSWER_REVEAL_DELAY_MS);
+
+      const nextQuestion = gameEngine.advanceQuestion(matchId);
+
+      if (nextQuestion) {
+        const updatedSession = gameEngine.getSession(matchId);
+        if (!updatedSession) return;
+
+        const startPayload: QuestionStartPayload = {
+          matchId,
+          questionOrder: nextQuestion.questionOrder,
+          totalQuestions: updatedSession.questions.length,
+          questionId: updatedSession.questions[nextQuestion.questionOrder].id,
+          questionText: nextQuestion.questionText,
+          answers: nextQuestion.answers,
+          difficulty: nextQuestion.difficulty,
+          timeLimitMs: nextQuestion.timeLimitMs,
         };
 
-        io.to(matchId).emit(SERVER_EVENTS.MATCH_ENDED, endPayload);
-      } catch (err: any) {
-        io.to(matchId).emit(SERVER_EVENTS.ERROR, {
-          code: err?.code ?? MATCH_ERROR_CODES.INTERNAL_ERROR,
-          message: err?.message ?? 'Failed to finalize match',
-        } as MatchErrorPayload);
+        io.to(matchId).emit(SERVER_EVENTS.QUESTION_START, startPayload);
+      } else {
+        // Match is over — finalize
+        try {
+          const result = await gameEngine.finalizeMatch(matchId);
+
+          // C3: fetch persisted answers for post-match review
+          let answers: MatchAnswer[] = [];
+          try {
+            answers = await matchService.getMatchAnswers(result.matchId);
+          } catch (err) {
+            console.error('[SocketHandler] getMatchAnswers failed:', err);
+          }
+
+          const endPayload: MatchEndedPayload = {
+            matchId: result.matchId,
+            winnerId: result.winnerId,
+            player1Score: result.player1Score,
+            player2Score: result.player2Score,
+            player1EloChange: result.player1EloDelta,
+            player2EloChange: result.player2EloDelta,
+            player1EloAfter: result.player1EloAfter,
+            player2EloAfter: result.player2EloAfter,
+            answers,
+          };
+
+          io.to(matchId).emit(SERVER_EVENTS.MATCH_ENDED, endPayload);
+        } catch (err: any) {
+          io.to(matchId).emit(SERVER_EVENTS.ERROR, {
+            code: err?.code ?? MATCH_ERROR_CODES.INTERNAL_ERROR,
+            message: err?.message ?? 'Failed to finalize match',
+          } as MatchErrorPayload);
+        }
       }
+    } finally {
+      revealInProgress.delete(lockKey);
     }
   }
 
@@ -161,8 +159,8 @@ export function createSocketHandler(
     player1Entry: QueueEntry,
     player2Entry: QueueEntry
   ): Promise<void> {
-    // Use a default theme ID for MVP — players can specify later
-    const themeId = '00000000-0000-0000-0000-000000000001';
+    // H3: use the resolved themeId from the queue entries, fall back to Quran theme
+    const themeId = player1Entry.themeId ?? player2Entry.themeId ?? 'a1b2c3d4-0001-0001-0001-000000000001';
 
     try {
       const session = await gameEngine.createSession({
@@ -176,7 +174,6 @@ export function createSocketHandler(
 
       const matchId = session.matchId;
 
-      // Both sockets join the match room
       const player1Socket = io.sockets.sockets.get(player1Entry.socketId) as
         | AuthenticatedSocket
         | undefined;
@@ -187,12 +184,11 @@ export function createSocketHandler(
       if (player1Socket) player1Socket.join(matchId);
       if (player2Socket) player2Socket.join(matchId);
 
-      // Emit MATCH_FOUND to each player with opponent info
       if (player1Socket) {
         const payload: MatchFoundPayload = {
           matchId,
           opponentId: player2Entry.playerId,
-          opponentDisplayName: player2Entry.playerId, // display name resolution is post-MVP
+          opponentDisplayName: player2Entry.playerId,
           opponentElo: player2Entry.elo,
           matchType: session.matchType,
           themeId: session.themeId,
@@ -212,7 +208,6 @@ export function createSocketHandler(
         player2Socket.emit(SERVER_EVENTS.MATCH_FOUND, payload);
       }
 
-      // Start the session — get first question payload
       const firstQuestion = await gameEngine.startSession(matchId);
 
       if (firstQuestion) {
@@ -230,7 +225,6 @@ export function createSocketHandler(
         io.to(matchId).emit(SERVER_EVENTS.QUESTION_START, startPayload);
       }
     } catch (err: any) {
-      // Notify both sockets of the failure
       [player1Entry.socketId, player2Entry.socketId].forEach((sid) => {
         const s = io.sockets.sockets.get(sid);
         if (s) {
@@ -248,7 +242,9 @@ export function createSocketHandler(
   // -------------------------------------------------------------------------
   matchmakingService.startLoop(
     (player1, player2) => {
-      handleMatchFound(player1, player2).catch(() => {});
+      handleMatchFound(player1, player2).catch((err) => {
+        console.error('[SocketHandler] handleMatchFound error:', err);
+      });
     },
     (timedOutEntry) => {
       const s = io.sockets.sockets.get(timedOutEntry.socketId);
@@ -261,6 +257,14 @@ export function createSocketHandler(
     }
   );
 
+  // H12: wire orphan cleanup interval
+  const cleanupInterval = setInterval(() => {
+    const removed = gameEngine.cleanupOrphanedSessions(GAME_SESSION.ORPHAN_THRESHOLD_MS);
+    if (removed.length > 0) {
+      console.log(`[GameEngine] Cleaned up ${removed.length} orphaned sessions:`, removed);
+    }
+  }, GAME_SESSION.CLEANUP_INTERVAL_MS);
+
   // -------------------------------------------------------------------------
   // Per-connection event wiring
   // -------------------------------------------------------------------------
@@ -270,6 +274,7 @@ export function createSocketHandler(
 
     // ------------------------------------------------------------------
     // JOIN_QUEUE
+    // H2: fetch real ELO from DB before joining queue
     // ------------------------------------------------------------------
     socket.on(CLIENT_EVENTS.JOIN_QUEUE, async (payload: JoinQueuePayload) => {
       const validation = validateJoinQueue(payload);
@@ -279,11 +284,16 @@ export function createSocketHandler(
       }
 
       try {
+        // H2: fetch actual player ELO from profile
+        const profile = await profileService.getProfile(playerId);
+        const playerElo = profile.elo;
+
         const queueSize = matchmakingService.joinQueue(
           playerId,
           socket.id,
-          1000, // Default ELO — real ELO should be fetched from DB in production
-          payload.matchType
+          playerElo,
+          payload.matchType,
+          payload.themeId ?? null  // H3: pass themeId through
         );
 
         const queuePayload: QueueJoinedPayload = {
@@ -325,7 +335,6 @@ export function createSocketHandler(
           timeTakenMs,
         });
 
-        // Acknowledge the submitting player's answer
         const acceptedPayload: AnswerAcceptedPayload = {
           matchId,
           questionOrder,
@@ -335,13 +344,8 @@ export function createSocketHandler(
         };
         socket.emit(SERVER_EVENTS.ANSWER_ACCEPTED, acceptedPayload);
 
-        // Notify opponent that the player answered (without revealing which answer)
         const session = gameEngine.getSession(matchId);
         if (session) {
-          const opponentId =
-            playerId === session.player1Id ? session.player2Id : session.player1Id;
-
-          // Find the opponent's socket from the match room
           io.to(matchId)
             .except(socket.id)
             .emit(SERVER_EVENTS.OPPONENT_ANSWERED, {
@@ -351,7 +355,7 @@ export function createSocketHandler(
             } as OpponentAnsweredPayload);
 
           if (result.bothAnswered) {
-            // Both players have answered — reveal and advance
+            // H1: handleBothAnswered has internal lock to prevent double-execution
             await handleBothAnswered(matchId, questionOrder);
           }
         }
@@ -370,29 +374,51 @@ export function createSocketHandler(
       }
 
       try {
-        await gameEngine.abandonMatch(payload.matchId, playerId);
+        const { opponentId } = await gameEngine.abandonMatch(payload.matchId, playerId);
 
-        // Notify the opponent
         io.to(payload.matchId).except(socket.id).emit(SERVER_EVENTS.MATCH_ABANDONED, {
           matchId: payload.matchId,
           abandonedBy: playerId,
         });
+
+        // notify the specific opponent if we know who they are
+        if (opponentId) {
+          // room emit above already covers it
+        }
       } catch (err: any) {
         emitError(socket, err?.code ?? MATCH_ERROR_CODES.INTERNAL_ERROR, err?.message ?? 'Failed to abandon match');
       }
     });
 
     // ------------------------------------------------------------------
-    // DISCONNECT — auto-leave queue
+    // DISCONNECT — auto-leave queue AND abandon any active match (H11)
     // ------------------------------------------------------------------
     socket.on('disconnect', () => {
       matchmakingService.leaveQueue(playerId);
+
+      // H11: if player was in an active match, abandon it so opponent isn't stuck
+      const activeSession = gameEngine.getSessionByPlayerId(playerId);
+      if (activeSession) {
+        gameEngine.abandonMatch(activeSession.matchId, playerId)
+          .then(({ opponentId }) => {
+            if (opponentId) {
+              io.to(activeSession.matchId).emit(SERVER_EVENTS.MATCH_ABANDONED, {
+                matchId: activeSession.matchId,
+                abandonedBy: playerId,
+              });
+            }
+          })
+          .catch((err) => {
+            console.error('[SocketHandler] abandonMatch on disconnect failed:', err);
+          });
+      }
     });
   });
 
   // Return cleanup function
   return () => {
     matchmakingService.stopLoop();
+    clearInterval(cleanupInterval);
   };
 }
 
