@@ -37,11 +37,12 @@ CREATE POLICY "conversations_select_participant"
   TO authenticated
   USING (auth.uid() = player1_id OR auth.uid() = player2_id);
 
--- Users can create conversations (as either player)
-CREATE POLICY "conversations_insert_participant"
+-- Creator is always player1 to prevent impersonation (Issue 8 fix):
+-- user A cannot create a conversation listing user B as player1_id.
+CREATE POLICY "conversations_insert_creator"
   ON conversations FOR INSERT
   TO authenticated
-  WITH CHECK (auth.uid() = player1_id OR auth.uid() = player2_id);
+  WITH CHECK (auth.uid() = player1_id);
 
 -- Participants can update conversation (e.g. last_message_at)
 CREATE POLICY "conversations_update_participant"

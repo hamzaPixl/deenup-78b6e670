@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS questions (
                           CHECK (difficulty IN ('easy', 'medium', 'advanced')),
   question_fr           TEXT NOT NULL
                           CHECK (char_length(question_fr) > 0),
-  answers               JSONB NOT NULL,  -- Array of exactly 4 strings
+  -- Array of exactly 4 answer strings stored as JSONB
+  answers               JSONB NOT NULL
+                          CHECK (jsonb_typeof(answers) = 'array' AND jsonb_array_length(answers) = 4),
   correct_answer_index  INTEGER NOT NULL
                           CHECK (correct_answer_index BETWEEN 0 AND 3),
   explanation_fr        TEXT NOT NULL

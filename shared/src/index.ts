@@ -47,6 +47,7 @@ export type {
 export {
   SCORING,
   TIME_LIMITS,
+  TIME_LIMITS_MS,
   MATCH_FORMAT,
   DEEN_POINTS,
   POWERUP_COSTS,

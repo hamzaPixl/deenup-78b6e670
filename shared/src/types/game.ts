@@ -1,4 +1,12 @@
 // shared/src/types/game.ts
+//
+// NAMING CONVENTION NOTE:
+// These interfaces use snake_case field names because they map 1:1 to PostgreSQL
+// column names (DB-layer types). This is an intentional split from the camelCase
+// convention used in auth.ts, which represents API/application-layer types.
+// When data crosses the DB → API boundary a mapping utility converts snake_case
+// to camelCase. Both conventions coexist in shared/ by design.
+//
 import type {
   Difficulty,
   QuestionStatus,
@@ -103,14 +111,20 @@ export interface DeenPointsTransaction {
 }
 
 export interface Profile {
-  id: string;                  // References auth.users(id)
+  id: string;                          // References auth.users(id)
   display_name: string;
   avatar_url: string | null;
   elo: number;
   deen_points: number;
+  // Aggregate stats (added in migration 011)
   total_matches: number;
   total_wins: number;
+  losses: number;
+  draws: number;
   win_streak: number;
+  best_win_streak: number;
+  placement_matches_played: number;    // 0-2: tracks ELO placement progress
+  is_placed: boolean;                  // true once 2 placement matches completed
   created_at: string;
   updated_at: string;
 }

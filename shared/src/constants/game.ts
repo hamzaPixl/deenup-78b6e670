@@ -8,10 +8,20 @@ export const SCORING = {
   },
 } as const;
 
+// TIME_LIMITS — time allowed per question, in SECONDS.
+// Use TIME_LIMITS_MS for calculations involving time_taken_ms (DB column).
 export const TIME_LIMITS = {
-  easy: 15,   // seconds
-  medium: 20, // seconds
+  easy: 15,     // seconds
+  medium: 20,   // seconds
   advanced: 30, // seconds
+} as const;
+
+// TIME_LIMITS_MS — same limits expressed in MILLISECONDS for scoring formula:
+//   score = BASE_POINTS[difficulty] * (time_remaining_ms / TIME_LIMITS_MS[difficulty])
+export const TIME_LIMITS_MS = {
+  easy: 15_000,
+  medium: 20_000,
+  advanced: 30_000,
 } as const;
 
 export const MATCH_FORMAT = {

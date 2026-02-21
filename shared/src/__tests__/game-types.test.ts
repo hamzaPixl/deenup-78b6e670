@@ -189,21 +189,53 @@ describe('Game Types', () => {
   });
 
   describe('Profile', () => {
-    it('should accept a valid profile', () => {
+    it('should accept a valid profile with all gamification stats', () => {
       const profile: Profile = {
         id: 'uuid-user-1',
         display_name: 'TestUser',
         avatar_url: null,
         elo: 1000,
         deen_points: 50,
-        total_matches: 0,
-        total_wins: 0,
-        win_streak: 0,
+        total_matches: 5,
+        total_wins: 3,
+        losses: 1,
+        draws: 1,
+        win_streak: 2,
+        best_win_streak: 3,
+        placement_matches_played: 2,
+        is_placed: true,
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-01T00:00:00Z',
       };
       expect(profile.elo).toBe(1000);
       expect(profile.deen_points).toBe(50);
+      expect(profile.losses).toBe(1);
+      expect(profile.draws).toBe(1);
+      expect(profile.best_win_streak).toBe(3);
+      expect(profile.placement_matches_played).toBe(2);
+      expect(profile.is_placed).toBe(true);
+    });
+
+    it('should accept a new unplaced profile with default zero stats', () => {
+      const profile: Profile = {
+        id: 'uuid-user-2',
+        display_name: 'NewPlayer',
+        avatar_url: null,
+        elo: 1000,
+        deen_points: 50,
+        total_matches: 0,
+        total_wins: 0,
+        losses: 0,
+        draws: 0,
+        win_streak: 0,
+        best_win_streak: 0,
+        placement_matches_played: 0,
+        is_placed: false,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      };
+      expect(profile.is_placed).toBe(false);
+      expect(profile.placement_matches_played).toBe(0);
     });
   });
 

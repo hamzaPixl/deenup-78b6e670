@@ -2,6 +2,7 @@
 import {
   SCORING,
   TIME_LIMITS,
+  TIME_LIMITS_MS,
   MATCH_FORMAT,
   DEEN_POINTS,
   POWERUP_COSTS,
@@ -24,7 +25,7 @@ describe('Game Constants', () => {
     });
   });
 
-  describe('TIME_LIMITS', () => {
+  describe('TIME_LIMITS (seconds)', () => {
     it('should define 15 seconds for easy questions', () => {
       expect(TIME_LIMITS.easy).toBe(15);
     });
@@ -35,6 +36,20 @@ describe('Game Constants', () => {
 
     it('should define 30 seconds for advanced questions', () => {
       expect(TIME_LIMITS.advanced).toBe(30);
+    });
+  });
+
+  describe('TIME_LIMITS_MS (milliseconds — for scoring formula)', () => {
+    it('should be TIME_LIMITS * 1000 for easy', () => {
+      expect(TIME_LIMITS_MS.easy).toBe(TIME_LIMITS.easy * 1000);
+    });
+
+    it('should be TIME_LIMITS * 1000 for medium', () => {
+      expect(TIME_LIMITS_MS.medium).toBe(TIME_LIMITS.medium * 1000);
+    });
+
+    it('should be TIME_LIMITS * 1000 for advanced', () => {
+      expect(TIME_LIMITS_MS.advanced).toBe(TIME_LIMITS.advanced * 1000);
     });
   });
 

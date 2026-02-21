@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS matches (
                         CHECK (player2_score >= 0),
   player1_elo_before  INTEGER NOT NULL
                         CHECK (player1_elo_before >= 0),
-  player2_elo_before  INTEGER,
+  player2_elo_before  INTEGER
+                        CHECK (player2_elo_before IS NULL OR player2_elo_before >= 0),
   player1_elo_after   INTEGER,
   player2_elo_after   INTEGER,
   theme_id            UUID REFERENCES themes(id) ON DELETE SET NULL,
@@ -54,9 +55,12 @@ CREATE POLICY "matches_insert_own"
   TO authenticated
   WITH CHECK (auth.uid() = player1_id);
 
--- Players in the match can update it (e.g. joining as player2, updating scores)
--- Service role handles score updates; this covers player2 joining
-CREATE POLICY "matches_update_participant"
+-- Player2 can join a waiting match (only allowed to set player2_id to themselves).
+-- Score, ELO, winner, and status updates are handled by the backend service role
+-- which bypasses RLS. Authenticated clients can only update matches in 'waiting'
+-- status to prevent interfering with in-progress or completed matches.
+CREATE POLICY "matches_update_join"
   ON matches FOR UPDATE
   TO authenticated
-  USING (auth.uid() = player1_id OR auth.uid() = player2_id);
+  USING (status = 'waiting' AND auth.uid() = player2_id)
+  WITH CHECK (auth.uid() = player2_id);
