@@ -5,8 +5,8 @@ dotenv.config();
 import { createApp } from './app';
 
 const PORT = process.env.PORT ?? 3001;
-const app = createApp();
+const { httpServer } = createApp();
 
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`DeenUp API running on port ${PORT}`);
 });
