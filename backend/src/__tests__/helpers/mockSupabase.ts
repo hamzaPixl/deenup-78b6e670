@@ -1,13 +1,25 @@
 // backend/src/__tests__/helpers/mockSupabase.ts
-// Provides a chainable Supabase mock for unit/integration tests.
-// Never hits a real database.
+// Shared Supabase mock factory consumed by all backend integration test files.
+//
+// USAGE — top of every test file (jest.mock is hoisted before imports):
+//
+//   jest.mock('../db/supabase', () =>
+//     require('../__tests__/helpers/mockSupabase').createSupabaseMockModule()
+//   );
+//
+// Then inside describe/beforeEach:
+//   const { __mockClient, __mockQuery } = require('../db/supabase');
+//   beforeEach(() => resetSupabaseMocks(__mockQuery, __mockClient));
 
-export type MockSupabaseResult = {
-  data: unknown;
-  error: { message: string; code?: string } | null;
-};
+/** The shape returned by the supabase module mock. */
+export interface SupabaseMockModule {
+  supabaseAdmin: MockClient;
+  createUserClient: jest.Mock;
+  __mockClient: MockClient;
+  __mockQuery: MockQuery;
+}
 
-type ChainableQuery = {
+export interface MockQuery {
   select: jest.Mock;
   insert: jest.Mock;
   update: jest.Mock;
@@ -18,85 +30,102 @@ type ChainableQuery = {
   ilike: jest.Mock;
   order: jest.Mock;
   limit: jest.Mock;
-  range: jest.Mock;
   single: jest.Mock;
   maybeSingle: jest.Mock;
-  lte: jest.Mock;
-  gte: jest.Mock;
-  lt: jest.Mock;
-  gt: jest.Mock;
   is: jest.Mock;
   not: jest.Mock;
-  returns: jest.Mock;
-  _result: MockSupabaseResult;
-  _setResult: (result: MockSupabaseResult) => void;
-};
+  // Allows awaiting the query builder directly (without .single())
+  then: jest.Mock;
+}
 
-/**
- * Creates a chainable Supabase query mock.
- * By default all queries resolve to { data: null, error: null }.
- * Call `query._setResult(...)` to control the returned value.
- */
-export function createChainableQuery(
-  initialResult: MockSupabaseResult = { data: null, error: null },
-): ChainableQuery {
-  const query: ChainableQuery = {
-    _result: initialResult,
-    _setResult(result: MockSupabaseResult) {
-      this._result = result;
-    },
-  } as ChainableQuery;
-
-  // All chainable methods return `this` by default (for filter chaining).
-  // Terminal methods (single, maybeSingle) return the result.
-  const returnsSelf = jest.fn().mockImplementation(() => query);
-  const returnsResult = jest.fn().mockImplementation(async () => query._result);
-
-  query.select = returnsSelf;
-  query.insert = returnsSelf;
-  query.update = returnsSelf;
-  query.delete = returnsSelf;
-  query.eq = returnsSelf;
-  query.neq = returnsSelf;
-  query.in = returnsSelf;
-  query.ilike = returnsSelf;
-  query.order = returnsSelf;
-  query.limit = returnsSelf;
-  query.range = returnsSelf;
-  query.lte = returnsSelf;
-  query.gte = returnsSelf;
-  query.lt = returnsSelf;
-  query.gt = returnsSelf;
-  query.is = returnsSelf;
-  query.not = returnsSelf;
-  query.returns = returnsSelf;
-  query.single = returnsResult;
-  query.maybeSingle = returnsResult;
-
-  // Make the query itself awaitable (for queries without .single())
-  (query as unknown as Promise<MockSupabaseResult>).then = (
-    onfulfilled?: ((value: MockSupabaseResult) => unknown) | null,
-  ) => Promise.resolve(query._result).then(onfulfilled);
-
-  return query;
+export interface MockClient {
+  from: jest.Mock;
+  auth: { getUser: jest.Mock };
 }
 
 /**
- * Creates a minimal Supabase client mock.
- * The `.from()` method returns a chainable query.
+ * Creates the jest.mock factory for `../db/supabase`.
+ * Exposes `__mockClient` and `__mockQuery` on the mock module so tests can
+ * access them via `require('../db/supabase')`.
+ *
+ * Call inside `jest.mock()` at the top of each test file:
+ *   jest.mock('../db/supabase', () =>
+ *     require('../__tests__/helpers/mockSupabase').createSupabaseMockModule()
+ *   );
  */
-export function createMockSupabaseClient(defaultResult: MockSupabaseResult = { data: null, error: null }) {
-  const query = createChainableQuery(defaultResult);
+export function createSupabaseMockModule(): SupabaseMockModule {
+  const mockQuery: MockQuery = {
+    select: jest.fn().mockReturnThis(),
+    insert: jest.fn().mockReturnThis(),
+    update: jest.fn().mockReturnThis(),
+    delete: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    neq: jest.fn().mockReturnThis(),
+    in: jest.fn().mockReturnThis(),
+    ilike: jest.fn().mockReturnThis(),
+    order: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    single: jest.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+    is: jest.fn().mockReturnThis(),
+    not: jest.fn().mockReturnThis(),
+    then: jest.fn().mockImplementation((resolve: (v: unknown) => unknown) =>
+      Promise.resolve({ data: [], error: null, count: 0 }).then(resolve),
+    ),
+  };
 
-  const client = {
-    from: jest.fn().mockReturnValue(query),
+  const mockClient: MockClient = {
+    from: jest.fn().mockReturnValue(mockQuery),
     auth: {
       getUser: jest.fn().mockResolvedValue({ data: { user: null }, error: null }),
     },
-    _query: query, // expose so tests can configure results
   };
 
-  return client;
+  return {
+    supabaseAdmin: mockClient,
+    createUserClient: jest.fn().mockReturnValue(mockClient),
+    __mockClient: mockClient,
+    __mockQuery: mockQuery,
+  };
 }
 
-export type MockSupabaseClient = ReturnType<typeof createMockSupabaseClient>;
+/**
+ * Resets all mock methods to their initial "return this / resolve null" state.
+ * Call in `beforeEach` to isolate tests from each other.
+ */
+export function resetSupabaseMocks(mockQuery: MockQuery, mockClient: MockClient): void {
+  jest.clearAllMocks();
+  mockClient.from.mockReturnValue(mockQuery);
+  mockQuery.select.mockReturnThis();
+  mockQuery.insert.mockReturnThis();
+  mockQuery.update.mockReturnThis();
+  mockQuery.delete.mockReturnThis();
+  mockQuery.eq.mockReturnThis();
+  mockQuery.neq.mockReturnThis();
+  mockQuery.in.mockReturnThis();
+  mockQuery.ilike.mockReturnThis();
+  mockQuery.order.mockReturnThis();
+  mockQuery.limit.mockReturnThis();
+  mockQuery.is.mockReturnThis();
+  mockQuery.not.mockReturnThis();
+  mockQuery.single.mockResolvedValue({ data: null, error: null });
+  mockQuery.maybeSingle.mockResolvedValue({ data: null, error: null });
+  mockQuery.then.mockImplementation((resolve: (v: unknown) => unknown) =>
+    Promise.resolve({ data: [], error: null, count: 0 }).then(resolve),
+  );
+}
+
+/**
+ * Convenience helper to mock a Supabase-authenticated user.
+ */
+export function mockAuthUser(
+  mockClient: MockClient,
+  id: string,
+  email: string,
+  role: string,
+): void {
+  mockClient.auth.getUser.mockResolvedValue({
+    data: { user: { id, email, app_metadata: { role } } },
+    error: null,
+  });
+}

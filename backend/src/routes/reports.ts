@@ -3,26 +3,10 @@
 
 import { Router, Request, Response } from 'express';
 import { authenticateUser, requireRole } from '../middleware/auth';
+import { handleServiceError } from '../middleware/errorHandler';
 import * as questionService from '../services/question';
 
 const router = Router();
-
-// ── Helper: send service errors as HTTP responses ──────────────────────────
-function handleServiceError(res: Response, err: unknown): void {
-  const message = err instanceof Error ? err.message : 'An unexpected error occurred';
-
-  switch (message) {
-    case 'REPORT_NOT_FOUND':
-      res.status(404).json({ error: { code: 'REPORT_NOT_FOUND', message: 'Report not found' } });
-      return;
-    case 'ALREADY_RESOLVED':
-      res.status(400).json({ error: { code: 'ALREADY_RESOLVED', message: 'Report is already resolved' } });
-      return;
-    default:
-      console.error(err);
-      res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' } });
-  }
-}
 
 // ── GET / — List reports ───────────────────────────────────────────────────
 router.get(

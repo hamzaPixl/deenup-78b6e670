@@ -1,37 +1,14 @@
 // backend/src/__tests__/report-routes.test.ts
 // Integration tests for report routes.
 
-jest.mock('../db/supabase', () => {
-  const mockQuery = {
-    select: jest.fn().mockReturnThis(),
-    insert: jest.fn().mockReturnThis(),
-    update: jest.fn().mockReturnThis(),
-    delete: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    neq: jest.fn().mockReturnThis(),
-    in: jest.fn().mockReturnThis(),
-    ilike: jest.fn().mockReturnThis(),
-    order: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    single: jest.fn().mockResolvedValue({ data: null, error: null }),
-    maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
-    is: jest.fn().mockReturnThis(),
-    not: jest.fn().mockReturnThis(),
-  };
-  const mockClient = {
-    from: jest.fn().mockReturnValue(mockQuery),
-    auth: { getUser: jest.fn().mockResolvedValue({ data: { user: null }, error: null }) },
-  };
-  return {
-    supabaseAdmin: mockClient,
-    createUserClient: jest.fn().mockReturnValue(mockClient),
-    __mockClient: mockClient,
-    __mockQuery: mockQuery,
-  };
-});
+jest.mock('../db/supabase', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('./helpers/mockSupabase').createSupabaseMockModule(),
+);
 
 import request from 'supertest';
 import app from '../index';
+import { resetSupabaseMocks, mockAuthUser } from './helpers/mockSupabase';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { __mockClient, __mockQuery } = require('../db/supabase');
@@ -59,73 +36,13 @@ const dbReport = {
   created_at: '2026-01-01T00:00:00Z',
 };
 
-// ── Mock user helpers ─────────────────────────────────────────────────────
-
-function mockAdminUser() {
-  __mockClient.auth.getUser.mockResolvedValue({
-    data: {
-      user: {
-        id: 'admin-user-1',
-        email: 'admin@deenup.com',
-        app_metadata: { role: 'admin' },
-      },
-    },
-    error: null,
-  });
-}
-
-function mockModeratorUser() {
-  __mockClient.auth.getUser.mockResolvedValue({
-    data: {
-      user: {
-        id: 'mod-user-1',
-        email: 'mod@deenup.com',
-        app_metadata: { role: 'moderator' },
-      },
-    },
-    error: null,
-  });
-}
-
-function mockPlayerUser(userId = USER_ID) {
-  __mockClient.auth.getUser.mockResolvedValue({
-    data: {
-      user: {
-        id: userId,
-        email: 'player@deenup.com',
-        app_metadata: { role: 'player' },
-      },
-    },
-    error: null,
-  });
-}
-
-function resetQueryMocks() {
-  jest.clearAllMocks();
-  __mockClient.from.mockReturnValue(__mockQuery);
-  __mockQuery.select.mockReturnThis();
-  __mockQuery.insert.mockReturnThis();
-  __mockQuery.update.mockReturnThis();
-  __mockQuery.delete.mockReturnThis();
-  __mockQuery.eq.mockReturnThis();
-  __mockQuery.neq.mockReturnThis();
-  __mockQuery.in.mockReturnThis();
-  __mockQuery.ilike.mockReturnThis();
-  __mockQuery.order.mockReturnThis();
-  __mockQuery.limit.mockReturnThis();
-  __mockQuery.is.mockReturnThis();
-  __mockQuery.not.mockReturnThis();
-  __mockQuery.single.mockResolvedValue({ data: null, error: null });
-  __mockQuery.maybeSingle.mockResolvedValue({ data: null, error: null });
-}
-
 // ── Tests: POST /api/questions/:id/report ─────────────────────────────────
 
 describe('POST /api/questions/:id/report', () => {
-  beforeEach(resetQueryMocks);
+  beforeEach(() => resetSupabaseMocks(__mockQuery, __mockClient));
 
   it('authenticated player can report a question — returns 201', async () => {
-    mockPlayerUser();
+    mockAuthUser(__mockClient, USER_ID, 'player@deenup.com', 'player');
 
     // Call 1: check question exists → returns question
     // Call 2: insert report → returns report
@@ -161,7 +78,7 @@ describe('POST /api/questions/:id/report', () => {
   });
 
   it('returns 400 when reason is missing', async () => {
-    mockPlayerUser();
+    mockAuthUser(__mockClient, USER_ID, 'player@deenup.com', 'player');
 
     const res = await request(app)
       .post(`/api/questions/${QUESTION_ID}/report`)
@@ -185,10 +102,10 @@ describe('POST /api/questions/:id/report', () => {
 // ── Tests: GET /api/reports ────────────────────────────────────────────────
 
 describe('GET /api/reports', () => {
-  beforeEach(resetQueryMocks);
+  beforeEach(() => resetSupabaseMocks(__mockQuery, __mockClient));
 
   it('admin can list reports — returns 200', async () => {
-    mockAdminUser();
+    mockAuthUser(__mockClient, 'admin-user-1', 'admin@deenup.com', 'admin');
 
     const listQuery = {
       select: jest.fn().mockReturnThis(),
@@ -209,7 +126,7 @@ describe('GET /api/reports', () => {
   });
 
   it('player cannot list reports — returns 403', async () => {
-    mockPlayerUser();
+    mockAuthUser(__mockClient, USER_ID, 'player@deenup.com', 'player');
 
     const res = await request(app)
       .get('/api/reports')
@@ -223,10 +140,10 @@ describe('GET /api/reports', () => {
 // ── Tests: PUT /api/reports/:id/resolve ───────────────────────────────────
 
 describe('PUT /api/reports/:id/resolve', () => {
-  beforeEach(resetQueryMocks);
+  beforeEach(() => resetSupabaseMocks(__mockQuery, __mockClient));
 
   it('admin can resolve a report — returns 200', async () => {
-    mockAdminUser();
+    mockAuthUser(__mockClient, 'admin-user-1', 'admin@deenup.com', 'admin');
 
     const unresolvedReport = { ...dbReport, resolved: false };
     const resolvedReport = {
@@ -249,7 +166,7 @@ describe('PUT /api/reports/:id/resolve', () => {
   });
 
   it('non-admin/moderator cannot resolve report — returns 403', async () => {
-    mockPlayerUser();
+    mockAuthUser(__mockClient, USER_ID, 'player@deenup.com', 'player');
 
     const res = await request(app)
       .put(`/api/reports/${REPORT_ID}/resolve`)

@@ -2,7 +2,7 @@
 // web/src/app/admin/review/page.tsx
 
 import React, { useEffect, useState } from 'react';
-import { Question, QuestionListResponse } from '@deenup/shared';
+import { Question } from '@deenup/shared';
 import ReviewPanel from '../../../components/admin/ReviewPanel';
 import { apiClient } from '../../../lib/api';
 
@@ -13,8 +13,8 @@ export default function ReviewQueuePage() {
 
   useEffect(() => {
     apiClient
-      .get<QuestionListResponse>('/api/questions/review-queue')
-      .then(data => setQuestions(data.data))
+      .get<{ data: Question[] }>('/api/questions/review-queue')
+      .then(res => setQuestions(res.data))
       .catch(e => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
   }, []);

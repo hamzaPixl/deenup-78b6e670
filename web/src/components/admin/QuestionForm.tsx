@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Question,
+  QuestionSource,
   CreateQuestionRequest,
   QuestionOption,
   CreateSourceInput,
@@ -14,8 +15,11 @@ import {
   QUESTION_DEFAULTS,
 } from '@deenup/shared';
 
+// The API returns Question extended with its sources (loaded via JOIN).
+type QuestionWithSources = Question & { sources?: QuestionSource[] };
+
 interface QuestionFormProps {
-  initialData?: Question;
+  initialData?: QuestionWithSources;
   onSubmit: (data: CreateQuestionRequest) => Promise<void>;
 }
 
@@ -40,11 +44,16 @@ export default function QuestionForm({ initialData, onSubmit }: QuestionFormProp
     initialData?.options ?? emptyQCMOptions(),
   );
   const [explanation, setExplanation] = useState(initialData?.explanation ?? '');
-  const [sources, setSources] = useState<CreateSourceInput[]>(
-    initialData
-      ? [] // sources would need to be loaded separately
-      : [{ type: SOURCE_TYPES[0], reference: '' }],
-  );
+  const [sources, setSources] = useState<CreateSourceInput[]>(() => {
+    if (initialData?.sources && initialData.sources.length > 0) {
+      return initialData.sources.map(s => ({
+        type: s.type,
+        reference: s.reference,
+        detail: s.detail ?? undefined,
+      }));
+    }
+    return [{ type: SOURCE_TYPES[0], reference: '' }];
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,8 +103,8 @@ export default function QuestionForm({ initialData, onSubmit }: QuestionFormProp
     setLoading(true);
     try {
       await onSubmit({ text, theme: theme as CreateQuestionRequest['theme'], difficulty: difficulty as CreateQuestionRequest['difficulty'], type: type as CreateQuestionRequest['type'], options, explanation, sources });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Submission failed');
+    } catch (submitErr) {
+      setError(submitErr instanceof Error ? submitErr.message : 'Submission failed');
     } finally {
       setLoading(false);
     }

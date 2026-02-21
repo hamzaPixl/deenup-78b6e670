@@ -1,37 +1,14 @@
 // backend/src/__tests__/review-workflow.test.ts
 // Integration tests for question review workflow routes.
 
-jest.mock('../db/supabase', () => {
-  const mockQuery = {
-    select: jest.fn().mockReturnThis(),
-    insert: jest.fn().mockReturnThis(),
-    update: jest.fn().mockReturnThis(),
-    delete: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    neq: jest.fn().mockReturnThis(),
-    in: jest.fn().mockReturnThis(),
-    ilike: jest.fn().mockReturnThis(),
-    order: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    single: jest.fn().mockResolvedValue({ data: null, error: null }),
-    maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
-    is: jest.fn().mockReturnThis(),
-    not: jest.fn().mockReturnThis(),
-  };
-  const mockClient = {
-    from: jest.fn().mockReturnValue(mockQuery),
-    auth: { getUser: jest.fn().mockResolvedValue({ data: { user: null }, error: null }) },
-  };
-  return {
-    supabaseAdmin: mockClient,
-    createUserClient: jest.fn().mockReturnValue(mockClient),
-    __mockClient: mockClient,
-    __mockQuery: mockQuery,
-  };
-});
+jest.mock('../db/supabase', () =>
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('./helpers/mockSupabase').createSupabaseMockModule(),
+);
 
 import request from 'supertest';
 import app from '../index';
+import { resetSupabaseMocks, mockAuthUser } from './helpers/mockSupabase';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { __mockClient, __mockQuery } = require('../db/supabase');
@@ -77,63 +54,14 @@ const draftQuestion = {
 const pendingQuestion = { ...draftQuestion, status: 'pending_review' };
 const approvedQuestion = { ...draftQuestion, status: 'approved', reviewed_by: REVIEWER_ID };
 
-// ── Mock user helpers ─────────────────────────────────────────────────────
-
-function mockCreatorModerator() {
-  __mockClient.auth.getUser.mockResolvedValue({
-    data: {
-      user: {
-        id: CREATOR_ID,
-        email: 'creator@deenup.com',
-        app_metadata: { role: 'moderator' },
-      },
-    },
-    error: null,
-  });
-}
-
-function mockReviewerModerator() {
-  __mockClient.auth.getUser.mockResolvedValue({
-    data: {
-      user: {
-        id: REVIEWER_ID,
-        email: 'reviewer@deenup.com',
-        app_metadata: { role: 'moderator' },
-      },
-    },
-    error: null,
-  });
-}
-
-function resetQueryMocks() {
-  jest.clearAllMocks();
-  __mockClient.from.mockReturnValue(__mockQuery);
-  __mockQuery.select.mockReturnThis();
-  __mockQuery.insert.mockReturnThis();
-  __mockQuery.update.mockReturnThis();
-  __mockQuery.delete.mockReturnThis();
-  __mockQuery.eq.mockReturnThis();
-  __mockQuery.neq.mockReturnThis();
-  __mockQuery.in.mockReturnThis();
-  __mockQuery.ilike.mockReturnThis();
-  __mockQuery.order.mockReturnThis();
-  __mockQuery.limit.mockReturnThis();
-  __mockQuery.is.mockReturnThis();
-  __mockQuery.not.mockReturnThis();
-  __mockQuery.single.mockResolvedValue({ data: null, error: null });
-  __mockQuery.maybeSingle.mockResolvedValue({ data: null, error: null });
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 describe('POST /api/questions/:id/submit-review', () => {
-  beforeEach(resetQueryMocks);
+  beforeEach(() => resetSupabaseMocks(__mockQuery, __mockClient));
 
   it('transitions draft to pending_review — returns 200', async () => {
-    mockCreatorModerator();
+    mockAuthUser(__mockClient, CREATOR_ID, 'creator@deenup.com', 'moderator');
 
-    // First single() call fetches the question (status='draft', created_by=CREATOR_ID)
-    // Second single() call returns updated question with status='pending_review'
     __mockQuery.single
       .mockResolvedValueOnce({ data: draftQuestion, error: null })
       .mockResolvedValueOnce({ data: pendingQuestion, error: null });
@@ -147,9 +75,8 @@ describe('POST /api/questions/:id/submit-review', () => {
   });
 
   it('returns 400 when question is already pending_review', async () => {
-    mockCreatorModerator();
+    mockAuthUser(__mockClient, CREATOR_ID, 'creator@deenup.com', 'moderator');
 
-    // Fetch returns already pending question
     __mockQuery.single.mockResolvedValueOnce({ data: pendingQuestion, error: null });
 
     const res = await request(app)
@@ -162,10 +89,10 @@ describe('POST /api/questions/:id/submit-review', () => {
 });
 
 describe('POST /api/questions/:id/approve', () => {
-  beforeEach(resetQueryMocks);
+  beforeEach(() => resetSupabaseMocks(__mockQuery, __mockClient));
 
   it('approves a pending_review question by a different reviewer — returns 200', async () => {
-    mockReviewerModerator();
+    mockAuthUser(__mockClient, REVIEWER_ID, 'reviewer@deenup.com', 'moderator');
 
     __mockQuery.single
       .mockResolvedValueOnce({ data: pendingQuestion, error: null })
@@ -180,9 +107,8 @@ describe('POST /api/questions/:id/approve', () => {
   });
 
   it('returns 403 when creator tries to approve their own question', async () => {
-    mockCreatorModerator();
+    mockAuthUser(__mockClient, CREATOR_ID, 'creator@deenup.com', 'moderator');
 
-    // Fetch returns pending question with created_by=CREATOR_ID
     __mockQuery.single.mockResolvedValueOnce({ data: pendingQuestion, error: null });
 
     const res = await request(app)
@@ -195,10 +121,10 @@ describe('POST /api/questions/:id/approve', () => {
 });
 
 describe('POST /api/questions/:id/reject', () => {
-  beforeEach(resetQueryMocks);
+  beforeEach(() => resetSupabaseMocks(__mockQuery, __mockClient));
 
   it('rejects a pending_review question with notes — returns 200', async () => {
-    mockReviewerModerator();
+    mockAuthUser(__mockClient, REVIEWER_ID, 'reviewer@deenup.com', 'moderator');
 
     const rejectedQuestion = { ...pendingQuestion, status: 'rejected', reviewer_notes: 'Incorrect source citation' };
 
@@ -216,7 +142,7 @@ describe('POST /api/questions/:id/reject', () => {
   });
 
   it('returns 400 when notes are missing', async () => {
-    mockReviewerModerator();
+    mockAuthUser(__mockClient, REVIEWER_ID, 'reviewer@deenup.com', 'moderator');
 
     const res = await request(app)
       .post('/api/questions/q-draft-1/reject')
@@ -229,12 +155,11 @@ describe('POST /api/questions/:id/reject', () => {
 });
 
 describe('GET /api/questions/review-queue', () => {
-  beforeEach(resetQueryMocks);
+  beforeEach(() => resetSupabaseMocks(__mockQuery, __mockClient));
 
   it('returns 200 with queue for moderator', async () => {
-    mockReviewerModerator();
+    mockAuthUser(__mockClient, REVIEWER_ID, 'reviewer@deenup.com', 'moderator');
 
-    // For list queries (no .single()), make the query awaitable
     const listQuery = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
