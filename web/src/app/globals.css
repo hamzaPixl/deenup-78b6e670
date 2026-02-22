@@ -1,0 +1,304 @@
+@import "tailwindcss";
+
+/* ============================================================
+   DeenUp Design Tokens — CSS Custom Properties
+   ============================================================ */
+
+:root {
+  /* --- Color Palette --- */
+
+  /* Primary — deep navy (main backgrounds, headers) */
+  --color-primary: #1a1a2e;
+  --color-primary-dark: #0f0f1a;
+  --color-primary-light: #2d2d50;
+
+  /* Accent — Islamic green (CTAs, positive states) */
+  --color-accent: #16a34a;
+  --color-accent-dark: #15803d;
+  --color-accent-light: #22c55e;
+
+  /* Gold — ELO badges, streak highlights */
+  --color-gold: #d4a017;
+  --color-gold-light: #f5c842;
+  --color-gold-dark: #a37c0f;
+
+  /* Surface */
+  --color-surface: #ffffff;
+  --color-surface-muted: #f9fafb;
+  --color-surface-border: #e5e7eb;
+
+  /* Text */
+  --color-foreground: #111827;
+  --color-foreground-muted: #6b7280;
+  --color-foreground-inverted: #ffffff;
+
+  /* --- Typography --- */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-arabic: 'Amiri', 'Scheherazade New', Georgia, serif;
+
+  --text-xs: 0.75rem;    /* 12px */
+  --text-sm: 0.875rem;   /* 14px */
+  --text-base: 1rem;     /* 16px */
+  --text-lg: 1.125rem;   /* 18px */
+  --text-xl: 1.25rem;    /* 20px */
+  --text-2xl: 1.5rem;    /* 24px */
+  --text-3xl: 1.875rem;  /* 30px */
+  --text-4xl: 2.25rem;   /* 36px */
+  --text-5xl: 3rem;      /* 48px */
+
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+  --font-extrabold: 800;
+
+  --leading-tight: 1.25;
+  --leading-snug: 1.375;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+
+  /* --- Spacing --- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* --- Border Radius --- */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-full: 9999px;
+
+  /* --- Shadows --- */
+  --shadow-sm: 0 1px 3px 0 rgba(0,0,0,0.1), 0 1px 2px 0 rgba(0,0,0,0.06);
+  --shadow-card: 0 2px 16px 0 rgba(26,26,46,0.08);
+  --shadow-card-hover: 0 8px 32px 0 rgba(26,26,46,0.16);
+  --shadow-lg: 0 10px 40px 0 rgba(26,26,46,0.2);
+
+  /* --- Transitions --- */
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-slow: 400ms ease;
+
+  /* --- Layout --- */
+  --container-max: 1200px;
+  --container-padding: 1.5rem;
+  --section-padding-y: 5rem;
+  --section-padding-y-mobile: 3rem;
+
+  /* --- Z-index scale --- */
+  --z-base: 0;
+  --z-raised: 10;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-overlay: 300;
+  --z-modal: 400;
+}
+
+/* ============================================================
+   Base Resets & Global Styles
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--color-foreground);
+  background-color: var(--color-surface-muted);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================
+   Utility Classes
+   ============================================================ */
+
+.container {
+  width: 100%;
+  max-width: var(--container-max);
+  margin-inline: auto;
+  padding-inline: var(--container-padding);
+}
+
+.section {
+  padding-block: var(--section-padding-y-mobile);
+}
+
+@media (min-width: 768px) {
+  .section {
+    padding-block: var(--section-padding-y);
+  }
+  :root {
+    --container-padding: 2rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --container-padding: 3rem;
+  }
+}
+
+/* --- Buttons --- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 0.75rem 1.75rem;
+  border-radius: var(--radius-lg);
+  font-weight: var(--font-semibold);
+  font-size: var(--text-base);
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  border: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background-color: var(--color-accent);
+  color: var(--color-foreground-inverted);
+  border-color: var(--color-accent);
+}
+
+.btn-primary:hover {
+  background-color: var(--color-accent-dark);
+  border-color: var(--color-accent-dark);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-card);
+}
+
+.btn-secondary {
+  background-color: transparent;
+  color: var(--color-foreground-inverted);
+  border-color: rgba(255,255,255,0.5);
+}
+
+.btn-secondary:hover {
+  background-color: rgba(255,255,255,0.1);
+  border-color: var(--color-foreground-inverted);
+}
+
+.btn-outline {
+  background-color: transparent;
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.btn-outline:hover {
+  background-color: var(--color-accent);
+  color: var(--color-foreground-inverted);
+}
+
+/* --- Cards --- */
+.card {
+  background-color: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--transition-base), transform var(--transition-base);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+
+/* --- Section Headings --- */
+.section-label {
+  display: inline-block;
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  margin-bottom: var(--space-3);
+}
+
+.section-title {
+  font-size: var(--text-3xl);
+  font-weight: var(--font-extrabold);
+  color: var(--color-primary);
+  line-height: var(--leading-tight);
+  margin: 0 0 var(--space-4);
+}
+
+.section-subtitle {
+  font-size: var(--text-lg);
+  color: var(--color-foreground-muted);
+  line-height: var(--leading-relaxed);
+  margin: 0;
+}
+
+@media (min-width: 768px) {
+  .section-title {
+    font-size: var(--text-4xl);
+  }
+}
+
+/* --- Animations --- */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.6s ease-out both;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.5s ease-out both;
+}
+
+/* ── Step arrows — visible only on wide screens ─────────────────────── */
+@media (min-width: 900px) {
+  .step-arrow {
+    display: block !important;
+  }
+}
+
+/* ── Footer link focus ring ──────────────────────────────────────────── */
+.footer-link:focus-visible {
+  outline: 2px solid var(--color-accent-light);
+  outline-offset: 3px;
+}
+
+/* ── tabular-nums utility ────────────────────────────────────────────── */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Scroll-reveal base (no-JS safe: default visible) ───────────────── */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
