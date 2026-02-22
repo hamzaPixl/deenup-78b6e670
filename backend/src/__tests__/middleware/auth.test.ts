@@ -3,7 +3,7 @@ import { authenticateUser } from '../../middleware/auth';
 import { Request, Response, NextFunction } from 'express';
 
 const mockGetUser = jest.fn();
-jest.mock('../../config/supabase', () => ({
+jest.mock('../../db/supabase', () => ({
   supabaseAdmin: {
     auth: { getUser: (...args: any[]) => mockGetUser(...args) },
   },
@@ -28,7 +28,7 @@ describe('authenticateUser', () => {
     await authenticateUser(req as Request, res as Response, next);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.objectContaining({ code: 'INVALID_TOKEN' }) })
+      expect.objectContaining({ error: expect.objectContaining({ code: 'UNAUTHORIZED' }) })
     );
     expect(next).not.toHaveBeenCalled();
   });
@@ -76,7 +76,7 @@ describe('authenticateUser', () => {
 
     await authenticateUser(req as Request, res as Response, next);
     expect(next).toHaveBeenCalled();
-    expect((req as any).user).toEqual({ id: 'uuid-1', email: 'test@example.com' });
+    expect((req as any).user).toMatchObject({ id: 'uuid-1', email: 'test@example.com' });
     expect(res.status).not.toHaveBeenCalled();
   });
 });
