@@ -2,7 +2,7 @@
 import { Router, Request, Response } from 'express';
 import { MATCH_ERROR_CODES } from '@deenup/shared';
 import { MatchService } from '../services/matchService';
-import { authMiddleware } from '../middleware/auth';
+import { authenticateUser } from '../middleware/auth';
 import { validateMatchId, validateHistoryQuery } from '../validators/match';
 
 const ERROR_STATUS_MAP: Record<string, number> = {
@@ -26,7 +26,7 @@ export function createMatchesRouter(matchService: MatchService): Router {
    * Returns paginated match history for the authenticated user.
    * Query params: page (default: 1), pageSize (default: 10, max: 100)
    */
-  router.get('/', authMiddleware, async (req: Request, res: Response) => {
+  router.get('/', authenticateUser, async (req: Request, res: Response) => {
     const validation = validateHistoryQuery(req.query);
     if (!validation.success) {
       res.status(400).json({
@@ -55,7 +55,7 @@ export function createMatchesRouter(matchService: MatchService): Router {
    * GET /api/matches/:matchId
    * Returns match details and answers for the given match (authenticated).
    */
-  router.get('/:matchId', authMiddleware, async (req: Request, res: Response) => {
+  router.get('/:matchId', authenticateUser, async (req: Request, res: Response) => {
     const validation = validateMatchId(req.params.matchId);
     if (!validation.success) {
       res.status(400).json({
