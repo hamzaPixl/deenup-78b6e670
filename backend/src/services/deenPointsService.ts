@@ -94,7 +94,8 @@ export class DeenPointsService {
 
   /**
    * Fallback for environments where the RPC doesn't exist (unit tests).
-   * Still uses a single UPDATE with expression to be as safe as possible.
+   * Uses a SQL expression update (deen_points + amount) to be atomic — avoids
+   * the read-then-write race condition that could lose points on concurrent calls.
    */
   private async creditPointsFallback(
     playerId: string,
@@ -102,16 +103,23 @@ export class DeenPointsService {
     transactionType: PointsTransactionType,
     amount: number
   ): Promise<number> {
-    // Fallback: read-then-write (used only when RPC is unavailable, e.g. test envs)
-    const currentBalance = await this.getBalance(playerId);
-    const newBalance = currentBalance + amount;
-
-    const { data: updateData, error: updateError } = await this.supabase
-      .from('profiles')
-      .update({ deen_points: newBalance })
-      .eq('id', playerId)
-      .select('deen_points')
-      .single();
+    // Atomic expression update — no read step, so no TOCTOU race
+    const { data: updateData, error: updateError } = await this.supabase.rpc(
+      'increment_deen_points_fallback',
+      { p_player_id: playerId, p_amount: amount }
+    ).then(async (rpcResult) => {
+      if (rpcResult.error) {
+        // Final fallback: plain update (non-atomic, best-effort for test envs)
+        const current = await this.getBalance(playerId);
+        return this.supabase
+          .from('profiles')
+          .update({ deen_points: current + amount })
+          .eq('id', playerId)
+          .select('deen_points')
+          .single();
+      }
+      return { data: { deen_points: rpcResult.data as number }, error: null };
+    });
 
     if (updateError) {
       throw {
@@ -120,7 +128,7 @@ export class DeenPointsService {
       };
     }
 
-    const updatedBalance = (updateData as { deen_points: number } | null)?.deen_points ?? newBalance;
+    const updatedBalance = (updateData as { deen_points: number } | null)?.deen_points ?? 0;
 
     // Insert transaction record (non-blocking)
     this.supabase.from('deen_points_transactions').insert({

@@ -23,6 +23,39 @@ import type { MatchService } from '../services/matchService';
 import type { ProfileService } from '../services/profileService';
 import type { AuthenticatedSocket } from './socketAuth';
 
+// ---------------------------------------------------------------------------
+// Per-socket throttle: track last event timestamps per (socketId, eventName)
+// ---------------------------------------------------------------------------
+const RATE_LIMITS: Record<string, { maxCalls: number; windowMs: number }> = {
+  SUBMIT_ANSWER: { maxCalls: 2, windowMs: 1_000 },
+  JOIN_QUEUE: { maxCalls: 3, windowMs: 5_000 },
+  ABANDON_MATCH: { maxCalls: 2, windowMs: 5_000 },
+};
+
+/** Returns true if the event is allowed, false if rate-limited. */
+function checkRateLimit(
+  rateLimitMap: Map<string, number[]>,
+  socketId: string,
+  eventName: string
+): boolean {
+  const limit = RATE_LIMITS[eventName];
+  if (!limit) return true;
+
+  const key = `${socketId}:${eventName}`;
+  const now = Date.now();
+  const timestamps = rateLimitMap.get(key) ?? [];
+  const recent = timestamps.filter((t) => now - t < limit.windowMs);
+
+  if (recent.length >= limit.maxCalls) return false;
+
+  recent.push(now);
+  rateLimitMap.set(key, recent);
+  return true;
+}
+
+/** Max concurrent WebSocket connections per userId */
+const MAX_CONNECTIONS_PER_USER = 3;
+
 /**
  * Creates and wires all Socket.io event handlers.
  * Returns a cleanup function to stop the matchmaking loop and orphan cleanup.
@@ -36,6 +69,12 @@ export function createSocketHandler(
 ): () => void {
   // H1: per-(matchId, questionOrder) lock to prevent duplicate QUESTION_REVEAL on concurrent submits
   const revealInProgress = new Set<string>();
+
+  // Rate limiting state: socketId:eventName → timestamps[]
+  const rateLimitMap = new Map<string, number[]>();
+
+  // Per-user connection tracking: userId → Set<socketId>
+  const userSockets = new Map<string, Set<string>>();
 
   // -------------------------------------------------------------------------
   // Helper: emit an error to a specific socket
@@ -225,6 +264,30 @@ export function createSocketHandler(
         io.to(matchId).emit(SERVER_EVENTS.QUESTION_START, startPayload);
       }
     } catch (err: any) {
+      // Re-add players to queue so they can be matched again
+      try {
+        if (!matchmakingService.isInQueue(player1Entry.playerId)) {
+          matchmakingService.joinQueue(
+            player1Entry.playerId,
+            player1Entry.socketId,
+            player1Entry.elo,
+            player1Entry.matchType,
+            player1Entry.themeId
+          );
+        }
+        if (!matchmakingService.isInQueue(player2Entry.playerId)) {
+          matchmakingService.joinQueue(
+            player2Entry.playerId,
+            player2Entry.socketId,
+            player2Entry.elo,
+            player2Entry.matchType,
+            player2Entry.themeId
+          );
+        }
+      } catch (requeueErr) {
+        console.error('[SocketHandler] Failed to re-queue players after session creation failure:', requeueErr);
+      }
+
       [player1Entry.socketId, player2Entry.socketId].forEach((sid) => {
         const s = io.sockets.sockets.get(sid);
         if (s) {
@@ -272,11 +335,28 @@ export function createSocketHandler(
     const socket = rawSocket as AuthenticatedSocket;
     const playerId = socket.userId;
 
+    // ---- Per-user connection limit ----
+    const existing = userSockets.get(playerId) ?? new Set<string>();
+    if (existing.size >= MAX_CONNECTIONS_PER_USER) {
+      socket.emit(SERVER_EVENTS.ERROR, {
+        code: MATCH_ERROR_CODES.VALIDATION_ERROR,
+        message: 'Too many simultaneous connections for this account',
+      } as MatchErrorPayload);
+      socket.disconnect(true);
+      return;
+    }
+    existing.add(socket.id);
+    userSockets.set(playerId, existing);
+
     // ------------------------------------------------------------------
     // JOIN_QUEUE
     // H2: fetch real ELO from DB before joining queue
     // ------------------------------------------------------------------
     socket.on(CLIENT_EVENTS.JOIN_QUEUE, async (payload: JoinQueuePayload) => {
+      if (!checkRateLimit(rateLimitMap, socket.id, 'JOIN_QUEUE')) {
+        emitError(socket, MATCH_ERROR_CODES.VALIDATION_ERROR, 'Too many JOIN_QUEUE requests');
+        return;
+      }
       const validation = validateJoinQueue(payload);
       if (!validation.success) {
         emitError(socket, MATCH_ERROR_CODES.VALIDATION_ERROR, 'Invalid queue payload');
@@ -319,6 +399,10 @@ export function createSocketHandler(
     // SUBMIT_ANSWER
     // ------------------------------------------------------------------
     socket.on(CLIENT_EVENTS.SUBMIT_ANSWER, async (payload: SubmitAnswerPayload) => {
+      if (!checkRateLimit(rateLimitMap, socket.id, 'SUBMIT_ANSWER')) {
+        emitError(socket, MATCH_ERROR_CODES.VALIDATION_ERROR, 'Too many SUBMIT_ANSWER requests');
+        return;
+      }
       const validation = validateSubmitAnswer(payload);
       if (!validation.success) {
         emitError(socket, MATCH_ERROR_CODES.VALIDATION_ERROR, 'Invalid answer payload');
@@ -368,6 +452,10 @@ export function createSocketHandler(
     // ABANDON_MATCH
     // ------------------------------------------------------------------
     socket.on(CLIENT_EVENTS.ABANDON_MATCH, async (payload: { matchId: string }) => {
+      if (!checkRateLimit(rateLimitMap, socket.id, 'ABANDON_MATCH')) {
+        emitError(socket, MATCH_ERROR_CODES.VALIDATION_ERROR, 'Too many ABANDON_MATCH requests');
+        return;
+      }
       if (!payload?.matchId) {
         emitError(socket, MATCH_ERROR_CODES.VALIDATION_ERROR, 'matchId is required');
         return;
@@ -394,6 +482,18 @@ export function createSocketHandler(
     // DISCONNECT — auto-leave queue AND abandon any active match (H11)
     // ------------------------------------------------------------------
     socket.on('disconnect', () => {
+      // Clean up per-user connection tracking
+      const sockets = userSockets.get(playerId);
+      if (sockets) {
+        sockets.delete(socket.id);
+        if (sockets.size === 0) userSockets.delete(playerId);
+      }
+
+      // Clean up rate limit state for this socket
+      for (const key of rateLimitMap.keys()) {
+        if (key.startsWith(`${socket.id}:`)) rateLimitMap.delete(key);
+      }
+
       matchmakingService.leaveQueue(playerId);
 
       // H11: if player was in an active match, abandon it so opponent isn't stuck

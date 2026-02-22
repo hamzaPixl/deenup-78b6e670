@@ -1,5 +1,8 @@
 // backend/src/validators/match.ts
-import { MATCH_FORMAT } from '@deenup/shared';
+import { MATCH_FORMAT, GAME_SESSION } from '@deenup/shared';
+
+// Maximum allowed timeTakenMs: the hardest difficulty (advanced = 30s) + grace period
+const MAX_TIME_TAKEN_MS = 30_000 + GAME_SESSION.ANSWER_TIMEOUT_GRACE_MS;
 
 interface ValidationResult {
   success: boolean;
@@ -64,6 +67,11 @@ export function validateSubmitAnswer(input: unknown): ValidationResult {
   const timeTaken = body['timeTakenMs'];
   if (typeof timeTaken !== 'number' || timeTaken < 0) {
     errors.push({ field: 'timeTakenMs', message: 'timeTakenMs must be a non-negative number' });
+  } else if (timeTaken > MAX_TIME_TAKEN_MS) {
+    errors.push({
+      field: 'timeTakenMs',
+      message: `timeTakenMs must not exceed ${MAX_TIME_TAKEN_MS}ms (max difficulty time limit + grace period)`,
+    });
   }
 
   return { success: errors.length === 0, errors };

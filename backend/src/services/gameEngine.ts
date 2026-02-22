@@ -453,6 +453,8 @@ export class GameEngine {
 
   /**
    * Cleanup orphaned sessions older than a threshold (called periodically).
+   * Also marks the corresponding DB match records as 'abandoned' so they don't
+   * stay stuck as 'in_progress' forever.
    */
   cleanupOrphanedSessions(olderThanMs: number): string[] {
     const now = Date.now();
@@ -464,6 +466,15 @@ export class GameEngine {
       if (age > olderThanMs) {
         this.sessions.delete(matchId);
         removed.push(matchId);
+
+        // Persist abandoned status to DB (non-blocking)
+        this.matchService
+          .updateMatchStatus(matchId, 'abandoned', {
+            ended_at: new Date().toISOString(),
+          })
+          .catch((err) => {
+            console.error(`[GameEngine] Failed to mark orphaned match ${matchId} as abandoned:`, err);
+          });
       }
     }
 
