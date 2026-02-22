@@ -3,19 +3,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin } from '../db/supabase';
 
-// Extend Express Request to carry an authenticated user
-declare global {
-  namespace Express {
-    interface Request {
-      user?: {
-        id: string;
-        email: string;
-        role: string;
-      };
-    }
-  }
-}
-
 function extractBearerToken(req: Request): string | null {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {

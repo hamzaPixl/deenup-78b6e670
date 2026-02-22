@@ -13,7 +13,7 @@ import {
   Message,
   Salon,
   SalonMessage,
-} from '../index';
+} from '../types/game';
 
 describe('Game Types', () => {
   describe('Theme', () => {

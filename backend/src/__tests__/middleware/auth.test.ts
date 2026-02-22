@@ -1,5 +1,5 @@
 // backend/src/__tests__/middleware/auth.test.ts
-import { authMiddleware } from '../../middleware/auth';
+import { authenticateUser } from '../../middleware/auth';
 import { Request, Response, NextFunction } from 'express';
 
 const mockGetUser = jest.fn();
@@ -9,7 +9,7 @@ jest.mock('../../config/supabase', () => ({
   },
 }));
 
-describe('authMiddleware', () => {
+describe('authenticateUser', () => {
   let req: Partial<Request>;
   let res: Partial<Response>;
   let next: NextFunction;
@@ -25,7 +25,7 @@ describe('authMiddleware', () => {
   });
 
   it('should return 401 when no Authorization header', async () => {
-    await authMiddleware(req as Request, res as Response, next);
+    await authenticateUser(req as Request, res as Response, next);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.objectContaining({ code: 'INVALID_TOKEN' }) })
@@ -35,7 +35,7 @@ describe('authMiddleware', () => {
 
   it('should return 401 when Authorization header is malformed (no Bearer prefix)', async () => {
     req.headers = { authorization: 'Basic sometoken' };
-    await authMiddleware(req as Request, res as Response, next);
+    await authenticateUser(req as Request, res as Response, next);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
   });
@@ -47,7 +47,7 @@ describe('authMiddleware', () => {
       error: { message: 'invalid JWT' },
     });
 
-    await authMiddleware(req as Request, res as Response, next);
+    await authenticateUser(req as Request, res as Response, next);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.objectContaining({ code: 'TOKEN_EXPIRED' }) })
@@ -62,7 +62,7 @@ describe('authMiddleware', () => {
       error: null,
     });
 
-    await authMiddleware(req as Request, res as Response, next);
+    await authenticateUser(req as Request, res as Response, next);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
   });
@@ -74,7 +74,7 @@ describe('authMiddleware', () => {
       error: null,
     });
 
-    await authMiddleware(req as Request, res as Response, next);
+    await authenticateUser(req as Request, res as Response, next);
     expect(next).toHaveBeenCalled();
     expect((req as any).user).toEqual({ id: 'uuid-1', email: 'test@example.com' });
     expect(res.status).not.toHaveBeenCalled();
