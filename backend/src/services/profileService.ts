@@ -74,6 +74,7 @@ export class ProfileService {
     return {
       id: row.id,
       email: row.email ?? '',
+      role: row.role ?? 'player',
       displayName: row.display_name,
       avatarUrl: row.avatar_url,
       elo: row.elo,

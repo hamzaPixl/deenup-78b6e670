@@ -12,7 +12,7 @@ jest.mock('../../middleware/rateLimiter', () => ({
 
 // Mock the auth middleware
 jest.mock('../../middleware/auth', () => ({
-  authMiddleware: (req: any, _res: any, next: any) => {
+  authenticateUser: (req: any, _res: any, next: any) => {
     req.user = { id: 'uuid-test', email: 'test@example.com' };
     next();
   },

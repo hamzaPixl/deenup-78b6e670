@@ -8,7 +8,7 @@ import {
   POWERUP_COSTS,
   THEMES,
   SALONS,
-} from '../index';
+} from '../constants/game';
 
 describe('Game Constants', () => {
   describe('SCORING', () => {

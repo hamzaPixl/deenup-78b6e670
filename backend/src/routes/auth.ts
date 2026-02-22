@@ -9,7 +9,7 @@ import {
   validatePasswordResetConfirm,
 } from '../validators/auth';
 import { signupLimiter, loginLimiter, passwordResetLimiter } from '../middleware/rateLimiter';
-import { authMiddleware } from '../middleware/auth';
+import { authenticateUser } from '../middleware/auth';
 
 const ERROR_STATUS_MAP: Record<string, number> = {
   [AUTH_ERROR_CODES.EMAIL_EXISTS]: 409,
@@ -114,7 +114,7 @@ export function createAuthRouter(authService: AuthService): Router {
     }
   });
 
-  router.get('/me', authMiddleware, async (req: Request, res: Response) => {
+  router.get('/me', authenticateUser, async (req: Request, res: Response) => {
     try {
       const token = req.headers.authorization!.substring(7);
       const result = await authService.getMe(token);
@@ -124,7 +124,7 @@ export function createAuthRouter(authService: AuthService): Router {
     }
   });
 
-  router.post('/social-profile-sync', authMiddleware, async (req: Request, res: Response) => {
+  router.post('/social-profile-sync', authenticateUser, async (req: Request, res: Response) => {
     try {
       const { displayName, avatarUrl } = req.body;
       const userId = (req as any).user.id;
