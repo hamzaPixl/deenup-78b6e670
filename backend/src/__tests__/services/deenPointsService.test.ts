@@ -3,7 +3,8 @@ import { DeenPointsService } from '../../services/deenPointsService';
 import { DEEN_POINTS } from '@deenup/shared';
 
 const mockFrom = jest.fn();
-const mockSupabase = { from: mockFrom };
+const mockRpc = jest.fn().mockResolvedValue({ data: null, error: { message: "no rpc" } });
+const mockSupabase = { from: mockFrom, rpc: mockRpc };
 
 function makeChain(result: unknown) {
   const chain: Record<string, jest.Mock> = {};

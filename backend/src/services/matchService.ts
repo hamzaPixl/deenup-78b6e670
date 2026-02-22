@@ -143,14 +143,21 @@ export class MatchService {
     return data as Match;
   }
 
-  async saveMatchQuestions(matchId: string, questionIds: string[]): Promise<void> {
+  /**
+   * Save match questions and return their generated UUIDs in question_order.
+   * Fix C2: returns real FK IDs so gameEngine can reference them when saving answers.
+   */
+  async saveMatchQuestions(matchId: string, questionIds: string[]): Promise<string[]> {
     const rows = questionIds.map((questionId, index) => ({
       match_id: matchId,
       question_id: questionId,
       question_order: index,
     }));
 
-    const { error } = await this.supabase.from('match_questions').insert(rows);
+    const { data, error } = await this.supabase
+      .from('match_questions')
+      .insert(rows)
+      .select('id, question_order');
 
     if (error) {
       throw {
@@ -158,6 +165,11 @@ export class MatchService {
         message: `Failed to save match questions: ${error.message}`,
       };
     }
+
+    // Sort by question_order and return IDs in order
+    const sorted = ((data ?? []) as { id: string; question_order: number }[])
+      .sort((a, b) => a.question_order - b.question_order);
+    return sorted.map((row) => row.id);
   }
 
   async saveAnswer(options: SaveAnswerOptions): Promise<MatchAnswer> {

@@ -144,14 +144,20 @@ describe('MatchService', () => {
   });
 
   describe('saveMatchQuestions', () => {
-    it('should insert match questions', async () => {
+    it('should insert match questions and return IDs', async () => {
       const insertChain: Record<string, jest.Mock> = {};
-      insertChain['insert'] = jest.fn().mockResolvedValue({ error: null });
+      insertChain['insert'] = jest.fn().mockReturnThis();
+      insertChain['select'] = jest.fn().mockResolvedValue({
+        data: [
+          { id: 'mq-uuid-0', question_order: 0 },
+          { id: 'mq-uuid-1', question_order: 1 },
+        ],
+        error: null,
+      });
       mockFrom.mockReturnValue(insertChain);
 
-      await expect(
-        service.saveMatchQuestions('match-uuid-1', ['q-1', 'q-2'])
-      ).resolves.not.toThrow();
+      const ids = await service.saveMatchQuestions('match-uuid-1', ['q-1', 'q-2']);
+      expect(ids).toEqual(['mq-uuid-0', 'mq-uuid-1']);
     });
   });
 

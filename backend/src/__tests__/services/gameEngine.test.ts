@@ -70,7 +70,7 @@ describe('GameEngine', () => {
     mockMatchService.createMatch.mockResolvedValue(mockMatch);
     mockMatchService.updateMatchStatus.mockResolvedValue({ ...mockMatch, status: 'in_progress' });
     mockMatchService.finalizeMatch.mockResolvedValue({ ...mockMatch, status: 'completed' });
-    mockMatchService.saveMatchQuestions.mockResolvedValue(undefined);
+    mockMatchService.saveMatchQuestions.mockResolvedValue(mockQuestions.map((_, i) => `mq-uuid-${i}`));
     mockMatchService.saveAnswer.mockResolvedValue({
       id: 'answer-1',
       match_id: 'match-uuid-1',

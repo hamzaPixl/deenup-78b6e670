@@ -8,8 +8,8 @@ export interface QueueEntry {
   socketId: string;
   elo: number;
   matchType: MatchType;
+  themeId: string | null;
   joinedAt: Date;
-  /** How many loop iterations this player has been waiting */
   loopCount: number;
 }
 
@@ -17,36 +17,22 @@ export interface MatchResult {
   opponentId: string;
   opponentSocketId: string;
   opponentElo: number;
+  opponentMatchType: MatchType;
+  opponentJoinedAt: Date;
+  opponentLoopCount: number;
+  themeId: string | null;
 }
 
-/**
- * In-memory matchmaking queue.
- * No database access — purely ephemeral state.
- *
- * Matching algorithm:
- * - Players must have the same matchType (ranked/unranked)
- * - ELO window starts at MATCHMAKING_WINDOW_INITIAL (100)
- * - Window expands by WINDOW_STEP every WINDOW_EXPAND_INTERVAL_LOOPS iterations
- * - Maximum window: MATCHMAKING_WINDOW_MAX (500)
- */
 export class MatchmakingService {
-  // Map<playerId, QueueEntry>
   readonly queue: Map<string, QueueEntry> = new Map();
   private loopInterval: NodeJS.Timeout | null = null;
 
-  // ---------------------------------------------------------------------------
-  // Queue management
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Add a player to the matchmaking queue.
-   * @returns The current queue size after joining
-   */
   joinQueue(
     playerId: string,
     socketId: string,
     elo: number,
-    matchType: MatchType
+    matchType: MatchType,
+    themeId: string | null = null
   ): number {
     if (this.queue.has(playerId)) {
       throw {
@@ -54,50 +40,25 @@ export class MatchmakingService {
         message: `Player ${playerId} is already in the matchmaking queue`,
       };
     }
-
     this.queue.set(playerId, {
-      playerId,
-      socketId,
-      elo,
-      matchType,
-      joinedAt: new Date(),
-      loopCount: 0,
+      playerId, socketId, elo, matchType, themeId,
+      joinedAt: new Date(), loopCount: 0,
     });
-
     return this.queue.size;
   }
 
-  /**
-   * Remove a player from the matchmaking queue.
-   */
   leaveQueue(playerId: string): void {
     this.queue.delete(playerId);
   }
 
-  /**
-   * Check whether a player is currently in the queue.
-   */
   isInQueue(playerId: string): boolean {
     return this.queue.has(playerId);
   }
 
-  /**
-   * Return the current number of players in the queue.
-   */
   getQueueSize(): number {
     return this.queue.size;
   }
 
-  // ---------------------------------------------------------------------------
-  // Matching
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Try to find a match for the given player.
-   * If a match is found, both players are removed from the queue.
-   *
-   * @returns MatchResult if a match is found, or null if no suitable opponent
-   */
   findMatch(playerId: string): MatchResult | null {
     const entry = this.queue.get(playerId);
     if (!entry) return null;
@@ -111,63 +72,57 @@ export class MatchmakingService {
       if (candidate.matchType !== entry.matchType) continue;
       if (candidate.elo < minElo || candidate.elo > maxElo) continue;
 
-      // Match found — remove both from queue
       this.queue.delete(playerId);
       this.queue.delete(candidateId);
+
+      const resolvedThemeId = entry.themeId ?? candidate.themeId;
 
       return {
         opponentId: candidateId,
         opponentSocketId: candidate.socketId,
         opponentElo: candidate.elo,
+        opponentMatchType: candidate.matchType,
+        opponentJoinedAt: candidate.joinedAt,
+        opponentLoopCount: candidate.loopCount,
+        themeId: resolvedThemeId,
       };
     }
 
-    // No match — increment loop count for window expansion
     if (entry) entry.loopCount++;
-
     return null;
   }
 
-  /**
-   * Run a matchmaking pass for all players in queue.
-   * Returns an array of matched pairs (each pair appears only once).
-   */
+  // Fix H4: snapshot keys before iterating; Fix H17: preserve opponent's original data
   runMatchmakingPass(): Array<{ player1: QueueEntry; player2: QueueEntry }> {
     const matched: Array<{ player1: QueueEntry; player2: QueueEntry }> = [];
     const processedIds = new Set<string>();
+    const playerIds = Array.from(this.queue.keys());
 
-    for (const [playerId, entry] of this.queue) {
+    for (const playerId of playerIds) {
       if (processedIds.has(playerId)) continue;
+      if (!this.queue.has(playerId)) continue;
 
+      const entry = this.queue.get(playerId)!;
       const result = this.findMatch(playerId);
       if (result) {
         processedIds.add(playerId);
         processedIds.add(result.opponentId);
-        matched.push({
-          player1: entry,
-          player2: {
-            playerId: result.opponentId,
-            socketId: result.opponentSocketId,
-            elo: result.opponentElo,
-            matchType: entry.matchType,
-            joinedAt: new Date(),
-            loopCount: 0,
-          },
-        });
+        const opponentEntry: QueueEntry = {
+          playerId: result.opponentId,
+          socketId: result.opponentSocketId,
+          elo: result.opponentElo,
+          matchType: result.opponentMatchType,
+          themeId: result.themeId,
+          joinedAt: result.opponentJoinedAt,
+          loopCount: result.opponentLoopCount,
+        };
+        matched.push({ player1: entry, player2: opponentEntry });
       }
     }
 
     return matched;
   }
 
-  // ---------------------------------------------------------------------------
-  // Timeout management
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Find and remove players who have been waiting longer than QUEUE_TIMEOUT_SECONDS.
-   * @returns Array of expired entries (so callers can notify them)
-   */
   expireTimedOutPlayers(): QueueEntry[] {
     const now = Date.now();
     const timeoutMs = MATCHMAKING.QUEUE_TIMEOUT_SECONDS * 1000;
@@ -184,28 +139,16 @@ export class MatchmakingService {
     return expired;
   }
 
-  // ---------------------------------------------------------------------------
-  // Background loop control (used by the socket handler)
-  // ---------------------------------------------------------------------------
-
   startLoop(
     onMatch: (player1: QueueEntry, player2: QueueEntry) => void,
     onTimeout: (entry: QueueEntry) => void
   ): void {
-    if (this.loopInterval) return; // already running
-
+    if (this.loopInterval) return;
     this.loopInterval = setInterval(() => {
-      // First expire timed-out players
       const expired = this.expireTimedOutPlayers();
-      for (const entry of expired) {
-        onTimeout(entry);
-      }
-
-      // Then run a matching pass
+      for (const entry of expired) onTimeout(entry);
       const pairs = this.runMatchmakingPass();
-      for (const { player1, player2 } of pairs) {
-        onMatch(player1, player2);
-      }
+      for (const { player1, player2 } of pairs) onMatch(player1, player2);
     }, MATCHMAKING.LOOP_INTERVAL_MS);
   }
 
@@ -216,14 +159,9 @@ export class MatchmakingService {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
-
   private getEloWindow(loopCount: number): number {
     const expansions = Math.floor(loopCount / MATCHMAKING.WINDOW_EXPAND_INTERVAL_LOOPS);
-    const window =
-      ELO.MATCHMAKING_WINDOW_INITIAL + expansions * ELO.MATCHMAKING_WINDOW_STEP;
+    const window = ELO.MATCHMAKING_WINDOW_INITIAL + expansions * ELO.MATCHMAKING_WINDOW_STEP;
     return Math.min(window, ELO.MATCHMAKING_WINDOW_MAX);
   }
 }

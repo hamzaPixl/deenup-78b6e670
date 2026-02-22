@@ -34,6 +34,8 @@ export interface MatchSession {
   matchType: MatchType;
   themeId: string;
   questions: Question[];
+  /** Real match_questions UUIDs in question order, populated after saveMatchQuestions */
+  matchQuestionIds: string[];
   state: SessionState;
   currentQuestionIndex: number;
   player1Score: number;
@@ -109,6 +111,7 @@ export class GameEngine {
    * Create a new match session.
    * - Creates the DB match record
    * - Fetches 15 questions
+   * - Saves match_questions rows and stores their real IDs (fix C2)
    * - Stores the session in memory
    */
   async createSession(options: CreateSessionOptions): Promise<MatchSession> {
@@ -125,8 +128,8 @@ export class GameEngine {
     // 2. Fetch questions
     const questions = await this.questionService.getQuestionsForMatch(options.themeId);
 
-    // 3. Save question list to DB
-    await this.matchService.saveMatchQuestions(
+    // 3. Save question list to DB — get back the real match_question UUIDs (fix C2)
+    const matchQuestionIds = await this.matchService.saveMatchQuestions(
       match.id,
       questions.map((q) => q.id)
     );
@@ -141,6 +144,7 @@ export class GameEngine {
       matchType: options.matchType,
       themeId: options.themeId,
       questions,
+      matchQuestionIds,
       state: 'awaiting_start',
       currentQuestionIndex: 0,
       player1Score: 0,
@@ -234,25 +238,30 @@ export class GameEngine {
     const timeLimitMs = TIME_LIMITS_MS[question.difficulty as Difficulty];
     const isFast = timeTakenMs <= timeLimitMs * FAST_ANSWER.THRESHOLD_PERCENT;
     if (isCorrect && isFast) {
-      this.deenPointsService.awardFastAnswer(playerId, matchId).catch(() => {
-        // Log but don't fail the answer submission
+      this.deenPointsService.awardFastAnswer(playerId, matchId).catch((err) => {
+        console.error(`[GameEngine] awardFastAnswer failed for ${playerId}:`, err);
       });
     }
 
-    // Persist answer to DB (non-blocking for performance — will retry on engine shutdown if needed)
-    this.matchService
-      .saveAnswer({
-        matchId,
-        matchQuestionId: `${matchId}-q${questionOrder}`, // placeholder — real ID from match_questions table
-        playerId,
-        selectedAnswerIndex,
-        isCorrect,
-        timeTakenMs,
-        pointsEarned,
-      })
-      .catch(() => {
-        // Log but don't fail the answer submission
-      });
+    // Persist answer to DB using the real match_question UUID (fix C2)
+    const matchQuestionId = session.matchQuestionIds[questionOrder];
+    if (matchQuestionId) {
+      this.matchService
+        .saveAnswer({
+          matchId,
+          matchQuestionId,
+          playerId,
+          selectedAnswerIndex,
+          isCorrect,
+          timeTakenMs,
+          pointsEarned,
+        })
+        .catch((err) => {
+          console.error(`[GameEngine] saveAnswer failed for ${playerId} q${questionOrder}:`, err);
+        });
+    } else {
+      console.warn(`[GameEngine] No matchQuestionId for order ${questionOrder} in match ${matchId}`);
+    }
 
     const bothAnswered = !!(answerSlot.player1 && answerSlot.player2);
     const opponentAnswered = isPlayer1 ? !!answerSlot.player2 : !!answerSlot.player1;
@@ -281,7 +290,8 @@ export class GameEngine {
   }
 
   /**
-   * Finalize the match: compute ELO, award DeenPoints, update DB.
+   * Finalize the match: compute ELO correctly for all outcomes, award DeenPoints, update DB.
+   * Fix C1: ELO is now computed from the actual winner's perspective, not always player1's.
    */
   async finalizeMatch(matchId: string): Promise<FinalizeResult> {
     const session = this.requireSession(matchId);
@@ -289,24 +299,48 @@ export class GameEngine {
 
     // Determine winner
     let winnerId: string | null = null;
-    let outcome: 'win' | 'loss' | 'draw';
+    let player1EloAfter: number;
+    let player2EloAfter: number;
+    let player1EloDelta: number;
+    let player2EloDelta: number;
 
     if (session.player1Score > session.player2Score) {
+      // player1 wins
       winnerId = session.player1Id;
-      outcome = 'win';
+      const eloResult = this.eloService.applyEloChange(
+        session.player1Elo,
+        session.player2Elo,
+        'win'
+      );
+      player1EloAfter = eloResult.winnerNewElo;
+      player2EloAfter = eloResult.loserNewElo;
+      player1EloDelta = eloResult.winnerDelta;
+      player2EloDelta = eloResult.loserDelta;
     } else if (session.player2Score > session.player1Score) {
+      // player2 wins — pass player2's ELO as the winner (fix C1)
       winnerId = session.player2Id;
-      outcome = 'loss'; // from player1's perspective
+      const eloResult = this.eloService.applyEloChange(
+        session.player2Elo,
+        session.player1Elo,
+        'win'
+      );
+      // eloResult.winnerNewElo → player2, eloResult.loserNewElo → player1
+      player1EloAfter = eloResult.loserNewElo;
+      player2EloAfter = eloResult.winnerNewElo;
+      player1EloDelta = eloResult.loserDelta;
+      player2EloDelta = eloResult.winnerDelta;
     } else {
-      outcome = 'draw';
+      // Draw — pass player1 as "winner" for the draw calculation
+      const eloResult = this.eloService.applyEloChange(
+        session.player1Elo,
+        session.player2Elo,
+        'draw'
+      );
+      player1EloAfter = eloResult.winnerNewElo;
+      player2EloAfter = eloResult.loserNewElo;
+      player1EloDelta = eloResult.winnerDelta;
+      player2EloDelta = eloResult.loserDelta;
     }
-
-    // Calculate ELO — from player1's perspective
-    const eloResult = this.eloService.applyEloChange(
-      session.player1Elo,
-      session.player2Elo,
-      outcome
-    );
 
     // Persist to DB
     await this.matchService.finalizeMatch({
@@ -314,13 +348,15 @@ export class GameEngine {
       winnerId,
       player1Score: session.player1Score,
       player2Score: session.player2Score,
-      player1EloAfter: eloResult.winnerNewElo,
-      player2EloAfter: eloResult.loserNewElo,
+      player1EloAfter,
+      player2EloAfter,
     });
 
     // Award DeenPoints to winner (non-blocking)
     if (winnerId) {
-      this.deenPointsService.awardMatchWin(winnerId, matchId).catch(() => {});
+      this.deenPointsService.awardMatchWin(winnerId, matchId).catch((err) => {
+        console.error(`[GameEngine] awardMatchWin failed for ${winnerId}:`, err);
+      });
     }
 
     // Clean up session
@@ -331,32 +367,64 @@ export class GameEngine {
       winnerId,
       player1Score: session.player1Score,
       player2Score: session.player2Score,
-      player1EloAfter: eloResult.winnerNewElo,
-      player2EloAfter: eloResult.loserNewElo,
-      player1EloDelta: eloResult.winnerDelta,
-      player2EloDelta: eloResult.loserDelta,
+      player1EloAfter,
+      player2EloAfter,
+      player1EloDelta,
+      player2EloDelta,
     };
   }
 
   /**
    * Abandon a match (e.g. player disconnects).
+   * Fix H6: ELO changes are now applied on abandon for ranked matches.
+   * Returns the opponent's ID so the caller can notify them.
    */
-  async abandonMatch(matchId: string, abandoningPlayerId: string): Promise<void> {
+  async abandonMatch(matchId: string, abandoningPlayerId: string): Promise<{ opponentId: string | null }> {
     const session = this.sessions.get(matchId);
-    if (!session) return;
+    if (!session) return { opponentId: null };
 
     session.state = 'abandoned';
 
-    // The abandoning player loses — give win to the other player
-    const winnerId =
-      abandoningPlayerId === session.player1Id ? session.player2Id : session.player1Id;
+    const isPlayer1Abandoning = abandoningPlayerId === session.player1Id;
+    const winnerId = isPlayer1Abandoning ? session.player2Id : session.player1Id;
+    const opponentId = winnerId;
+
+    // Apply ELO penalty for ranked abandons (fix H6)
+    let player1EloAfter = session.player1Elo;
+    let player2EloAfter = session.player2Elo;
+
+    if (session.matchType === 'ranked') {
+      if (isPlayer1Abandoning) {
+        // player2 wins
+        const eloResult = this.eloService.applyEloChange(
+          session.player2Elo,
+          session.player1Elo,
+          'win'
+        );
+        player1EloAfter = eloResult.loserNewElo;
+        player2EloAfter = eloResult.winnerNewElo;
+      } else {
+        // player1 wins
+        const eloResult = this.eloService.applyEloChange(
+          session.player1Elo,
+          session.player2Elo,
+          'win'
+        );
+        player1EloAfter = eloResult.winnerNewElo;
+        player2EloAfter = eloResult.loserNewElo;
+      }
+    }
 
     await this.matchService.updateMatchStatus(matchId, 'abandoned', {
       winner_id: winnerId,
+      player1_elo_after: player1EloAfter,
+      player2_elo_after: player2EloAfter,
       ended_at: new Date().toISOString(),
     });
 
     this.sessions.delete(matchId);
+
+    return { opponentId };
   }
 
   // ---------------------------------------------------------------------------
@@ -369,6 +437,18 @@ export class GameEngine {
 
   getActiveSessions(): MatchSession[] {
     return Array.from(this.sessions.values());
+  }
+
+  /**
+   * Find the matchId for an active session involving the given player.
+   */
+  getSessionByPlayerId(playerId: string): MatchSession | undefined {
+    for (const session of this.sessions.values()) {
+      if (session.player1Id === playerId || session.player2Id === playerId) {
+        return session;
+      }
+    }
+    return undefined;
   }
 
   /**

@@ -67,8 +67,8 @@ export function createApp(): AppInstance {
   // Apply authentication middleware to all socket connections
   io.use(socketAuthMiddleware);
 
-  // Wire all socket event handlers
-  createSocketHandler(io, gameEngine, matchmakingService);
+  // Wire all socket event handlers (pass matchService + profileService for H2 ELO fetch and C3 answer review)
+  createSocketHandler(io, gameEngine, matchmakingService, matchService, profileService);
 
   return { app, httpServer, gameEngine, matchmakingService };
 }
