@@ -5,7 +5,7 @@ import { createMatchesRouter } from '../../routes/matches';
 
 // Mock auth middleware to inject user
 jest.mock('../../middleware/auth', () => ({
-  authMiddleware: (req: any, _res: any, next: any) => {
+  authenticateUser: (req: any, _res: any, next: any) => {
     req.user = { id: 'player-uuid-1', email: 'player@example.com' };
     next();
   },

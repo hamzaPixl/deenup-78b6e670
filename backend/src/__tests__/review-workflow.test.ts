@@ -7,7 +7,9 @@ jest.mock('../db/supabase', () =>
 );
 
 import request from 'supertest';
-import app from '../index';
+import { createTestApp } from './helpers/createTestApp';
+
+const app = createTestApp();
 import { resetSupabaseMocks, mockAuthUser } from './helpers/mockSupabase';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
