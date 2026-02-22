@@ -22,6 +22,8 @@ export interface AppInstance {
   httpServer: http.Server;
   gameEngine: GameEngine;
   matchmakingService: MatchmakingService;
+  /** Stop the matchmaking loop and cleanup intervals (call on SIGTERM/SIGINT) */
+  cleanup: () => void;
 }
 
 export function createApp(): AppInstance {
@@ -57,9 +59,13 @@ export function createApp(): AppInstance {
   // -------------------------------------------------------------------------
   // Socket.io
   // -------------------------------------------------------------------------
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : ['http://localhost:3000', 'http://localhost:8081'];
+
   const io = new SocketIOServer(httpServer, {
     cors: {
-      origin: '*',
+      origin: allowedOrigins,
       methods: ['GET', 'POST'],
     },
   });
@@ -68,7 +74,7 @@ export function createApp(): AppInstance {
   io.use(socketAuthMiddleware);
 
   // Wire all socket event handlers (pass matchService + profileService for H2 ELO fetch and C3 answer review)
-  createSocketHandler(io, gameEngine, matchmakingService, matchService, profileService);
+  const cleanup = createSocketHandler(io, gameEngine, matchmakingService, matchService, profileService);
 
-  return { app, httpServer, gameEngine, matchmakingService };
+  return { app, httpServer, gameEngine, matchmakingService, cleanup };
 }

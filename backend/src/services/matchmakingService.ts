@@ -145,6 +145,9 @@ export class MatchmakingService {
   ): void {
     if (this.loopInterval) return;
     this.loopInterval = setInterval(() => {
+      // Skip processing entirely when queue is empty to avoid unnecessary CPU cycles
+      if (this.queue.size === 0) return;
+
       const expired = this.expireTimedOutPlayers();
       for (const entry of expired) onTimeout(entry);
       const pairs = this.runMatchmakingPass();
