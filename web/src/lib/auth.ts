@@ -20,7 +20,7 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify({ email, password, displayName }),
     });
-    await supabase.auth.setSession({
+    await supabase?.auth.setSession({
       access_token: result.session.accessToken,
       refresh_token: result.session.refreshToken,
     });
@@ -32,7 +32,7 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    await supabase.auth.setSession({
+    await supabase?.auth.setSession({
       access_token: result.session.accessToken,
       refresh_token: result.session.refreshToken,
     });
@@ -40,14 +40,14 @@ export const authApi = {
   },
 
   async logout() {
-    const { data } = await supabase.auth.getSession();
-    if (data.session) {
+    const session = await supabase?.auth.getSession();
+    if (session?.data.session) {
       await apiCall('/api/auth/logout', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${data.session.access_token}` },
+        headers: { Authorization: `Bearer ${session.data.session.access_token}` },
       }).catch(() => {});
     }
-    await supabase.auth.signOut();
+    await supabase?.auth.signOut();
   },
 
   async requestPasswordReset(email: string) {
