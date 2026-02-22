@@ -54,3 +54,33 @@ export {
   THEMES,
   SALONS,
 } from './constants/game';
+
+export {
+  ELO,
+  MATCHMAKING,
+  GAME_SESSION,
+  QUESTION_DISTRIBUTION,
+  FAST_ANSWER,
+} from './constants/match';
+
+export { MATCH_ERROR_CODES } from './types/errors';
+export type { MatchErrorCode, MatchError } from './types/errors';
+
+export { CLIENT_EVENTS, SERVER_EVENTS } from './types/websocket';
+export type { ClientEventName, ServerEventName } from './types/websocket';
+
+export type {
+  JoinQueuePayload,
+  SubmitAnswerPayload,
+  QueueJoinedPayload,
+  MatchFoundPayload,
+  QuestionStartPayload,
+  QuestionRevealPayload,
+  AnswerSummary,
+  AnswerAcceptedPayload,
+  OpponentAnsweredPayload,
+  MatchEndedPayload,
+  MatchErrorPayload,
+  MatchHistoryResponse,
+  MatchDetailResponse,
+} from './types/match-api';
